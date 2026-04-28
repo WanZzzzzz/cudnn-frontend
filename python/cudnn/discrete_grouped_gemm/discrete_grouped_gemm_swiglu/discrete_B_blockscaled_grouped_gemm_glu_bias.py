@@ -45,7 +45,6 @@ import cutlass.utils as utils
 import cutlass.pipeline as pipeline
 import cutlass.utils.blackwell_helpers as sm100_utils
 import cutlass.utils.blockscaled_layout as blockscaled_utils
-from cutlass._mlir.dialects.nvvm import ReduxKind
 from cutlass.cute.typing import Float32, Int32, AddressSpace
 from ..moe_persistent_scheduler import (
     MoEPersistentTileScheduler,
@@ -1152,7 +1151,7 @@ class BlockScaledDiscreteWeightGroupedGemmBiasKernel:
         # Warp-level reduction using wrapper function
         warp_amax = warp_redux_sync(
             value=amax_fp32,
-            kind=ReduxKind.MAX,
+            kind="max",
             mask_and_clamp=0xFFFFFFFF,
             nan=True,
         )
@@ -1315,7 +1314,7 @@ class BlockScaledDiscreteWeightGroupedGemmBiasKernel:
                 cutlass.Float32(
                     warp_redux_sync(
                         value=acc_frg[vi, 0],
-                        kind=ReduxKind.MAX,
+                        kind="max",
                         mask_and_clamp=0xFFFFFFFF,
                         nan=True,
                     )
