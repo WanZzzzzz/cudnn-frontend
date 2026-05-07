@@ -583,8 +583,10 @@ class BlockScaledMoEGroupedGemmDgluDbiasKernel:
         # Overlap and double buffer accumulator when num_acc_stage == 1 for cta_tile_n = 256 case
         self.overlapping_accum = self.num_acc_stage == 1 and self.mma_tiler[1] == 256
 
-        # To prefetch more accumulator when overlapping_accum is enabled in epilogue
-        self.epilogue_prefetch_more = self.d_dtype.width == 8 and self.a_dtype.width == 8
+        # The ping-pong prefetch path selects between two rmem tensor objects in
+        # the epilogue loop. Recent CuTe DSL lowers that to an arith.select over
+        # memrefs and leaves an unrealized_conversion_cast during LLVM lowering.
+        self.epilogue_prefetch_more = False
 
         # To generate dprob
         self.generate_dprob = True
