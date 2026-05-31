@@ -113,7 +113,6 @@ outputs = grouped_gemm_quant_wrapper_sm100(
     norm_const_tensor=norm_const,
     prob_tensor=prob,
     acc_dtype=torch.float32,
-    c_dtype=torch.bfloat16,
     d_dtype=torch.bfloat16,
     cd_major="n",
     mma_tiler_mn=(256, 256),
@@ -127,13 +126,13 @@ outputs = grouped_gemm_quant_wrapper_sm100(
 
 # dictionary access:
 d = outputs["d_tensor"]
-d_col = outputs["d_col_tensor"]
+d_col = outputs["d_col_tensor"]  # None for bf16/fp16/fp32 outputs; tensor only for low-precision outputs
 amax = outputs["amax_tensor"]
 sfd_row = outputs["sfd_row_tensor"]
 sfd_col = outputs["sfd_col_tensor"]
 
 # or tuple unpacking:
-d, d_col, amax, sfd_row, sfd_col = outputs
+d, d_col, amax, sfd_row, sfd_col = outputs  # d_col is None for bf16/fp16/fp32 outputs
 ```
 
 ### Class API
@@ -198,6 +197,7 @@ api.execute(
 
 - **Output tensor D_col**: `d_col_tensor` / `sample_d_col`
   - Shape/Dtype: Must match D
+  - Wrapper behavior: returned only when `d_dtype ∈ {float8_e4m3fn, float8_e5m2, float4_e2m1fn_x2}`; for `bfloat16`, `float16`, and `float32`, `outputs["d_col_tensor"]` is `None`
 
 - **Input tensor prob**: `prob_tensor` / `sample_prob`
   - Shape: `(valid_m, 1, 1)`, dtype: `float32`
@@ -219,7 +219,7 @@ api.execute(
 
 ### Wrapper Return Values
 
-Returns `TupleDict`: `d_tensor`, `d_col_tensor`, `amax_tensor`, `sfd_row_tensor`, `sfd_col_tensor`
+Returns `TupleDict`: `d_tensor`, `d_col_tensor` (optional; `None` for `bfloat16`/`float16`/`float32` outputs), `amax_tensor`, `sfd_row_tensor`, `sfd_col_tensor`
 
 ---
 

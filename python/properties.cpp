@@ -148,6 +148,14 @@ init_properties(py::module_& m) {
         .value("F16x16", cudnn_frontend::TensorReordering_t::F16x16)
         .value("F8_128x4", cudnn_frontend::TensorReordering_t::F8_128x4);
 
+    py::enum_<cudnn_frontend::graph::ScalarType>(m, "scalar_type")
+        .value("RUNTIME_PARAM", cudnn_frontend::graph::ScalarType::RUNTIME_PARAM)
+        .value("COMPILE_TIME_CONST", cudnn_frontend::graph::ScalarType::COMPILE_TIME_CONST);
+
+    py::enum_<cudnn_frontend::ReshapeMode_t>(m, "reshape_mode")
+        .value("VIEW_ONLY", cudnn_frontend::ReshapeMode_t::VIEW_ONLY)
+        .value("LOGICAL", cudnn_frontend::ReshapeMode_t::LOGICAL);
+
     py::class_<cudnn_frontend::graph::Tensor_attributes, std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>>(
         m, "tensor")
         .def(py::init<>())
@@ -171,6 +179,7 @@ init_properties(py::module_& m) {
             py::return_value_policy::reference)  // NOTICE THATS ITS JUST ANOTHER NAME FOR SET_IS_VIRTUAL
         .def("get_is_pass_by_value", &cudnn_frontend::graph::Tensor_attributes::get_is_pass_by_value)
         .def("set_is_pass_by_value", &cudnn_frontend::graph::Tensor_attributes::set_is_pass_by_value)
+        .def("get_has_compile_time_constant", &cudnn_frontend::graph::Tensor_attributes::get_has_compile_time_constant)
         .def("get_uid", &cudnn_frontend::graph::Tensor_attributes::get_uid)
         .def("set_uid", &cudnn_frontend::graph::Tensor_attributes::set_uid)
         .def("get_reordering_type", &cudnn_frontend::graph::Tensor_attributes::get_reordering_type)
@@ -222,7 +231,10 @@ init_properties(py::module_& m) {
         .value("SPLIT_P_SLC", cudnn_frontend::KnobType_t::SPLIT_P_SLC)
         .value("TILE_M", cudnn_frontend::KnobType_t::TILE_M)
         .value("TILE_N", cudnn_frontend::KnobType_t::TILE_N)
-        .value("WARP_SPEC_CFG", cudnn_frontend::KnobType_t::WARP_SPEC_CFG);
+        .value("WARP_SPEC_CFG", cudnn_frontend::KnobType_t::WARP_SPEC_CFG)
+        .value("SWAP_AB", cudnn_frontend::KnobType_t::SWAP_AB)
+        .value("INPUT_TMA_ENABLE", cudnn_frontend::KnobType_t::INPUT_TMA_ENABLE)
+        .value("OUTPUT_TMA_ENABLE", cudnn_frontend::KnobType_t::OUTPUT_TMA_ENABLE);
 
     py::class_<cudnn_frontend::Knob, std::shared_ptr<cudnn_frontend::Knob>>(m, "knob")
         .def(py::init<cudnn_frontend::KnobType_t, int64_t, int64_t, int64_t>(),

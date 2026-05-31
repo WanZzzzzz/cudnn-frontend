@@ -1,0 +1,6 @@
+config_name,model_name,backend,data_type,attn_mask,batch_size,q_seqlen,kv_seqlen,num_q_heads,num_kv_heads,head_dim_qk,head_dim_vo,profile_pass,deterministic_bwd,time_ms,tflops,max_diff,num_iterations,sliding_window_size,success,error_message,gpu_name,cudnn_version,cudnn_backend_version
+qwen35,qwen35,cudnn,bfloat16,top_left,1,32768,32768,32,2,256,256,fwd,False,9.357,1880.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+qwen35,qwen35,cudnn,bfloat16,top_left,1,16384,16384,32,2,256,256,fwd,False,2.312,1902.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+qwen35,qwen35,cudnn,bfloat16,top_left,1,8192,8192,32,2,256,256,fwd,False,0.619,1776.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+qwen35,qwen35,cudnn,bfloat16,top_left,1,4096,4096,32,2,256,256,fwd,False,0.182,1510.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+qwen35,qwen35,cudnn,bfloat16,top_left,1,2048,2048,32,2,256,256,fwd,False,0.064,1068.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900

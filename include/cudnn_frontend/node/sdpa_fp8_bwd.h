@@ -1089,10 +1089,32 @@ class SDPAFP8BackwardNode : public NodeCRTP<SDPAFP8BackwardNode> {
     std::pair<int64_t, std::unordered_map<KnobType_t, int64_t>>
     override_heuristics_query() const {
         int32_t const sm_version = context.get_sm_version();
+        bool const use_new_knobs = detail::get_backend_version() >= 92300;
+        // {128,128} bprop: tileM=3, tileN=2, kernelCfg=2(bprop warp), streamK=0, cgaM=0
         if (sm_version > 103 && is_deterministic_algorithm_supported_on_blackwell) {
-            return {17, {{KnobType_t::KERNEL_CFG, 31}, {KnobType_t::STAGES, 2}}};
+            if (use_new_knobs) {
+                return {17,
+                        {{KnobType_t::TILE_M, 3},
+                         {KnobType_t::TILE_N, 2},
+                         {KnobType_t::KERNEL_CFG, 2},
+                         {KnobType_t::STREAM_K, 0},
+                         {KnobType_t::TILE_CGA_M, 0},
+                         {KnobType_t::STAGES, 2}}};
+            } else {
+                return {17, {{KnobType_t::KERNEL_CFG, 31}, {KnobType_t::STAGES, 2}}};
+            }
         } else if (is_deterministic_algorithm_supported_on_blackwell) {
-            return {5, {{KnobType_t::KERNEL_CFG, 31}, {KnobType_t::STAGES, 2}}};
+            if (use_new_knobs) {
+                return {5,
+                        {{KnobType_t::TILE_M, 3},
+                         {KnobType_t::TILE_N, 2},
+                         {KnobType_t::KERNEL_CFG, 2},
+                         {KnobType_t::STREAM_K, 0},
+                         {KnobType_t::TILE_CGA_M, 0},
+                         {KnobType_t::STAGES, 2}}};
+            } else {
+                return {5, {{KnobType_t::KERNEL_CFG, 31}, {KnobType_t::STAGES, 2}}};
+            }
         } else {
             return {-1, {}};
         }

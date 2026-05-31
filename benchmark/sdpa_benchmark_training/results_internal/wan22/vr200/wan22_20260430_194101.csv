@@ -1,0 +1,16 @@
+config_name,model_name,backend,data_type,attn_mask,batch_size,q_seqlen,kv_seqlen,num_q_heads,num_kv_heads,head_dim_qk,head_dim_vo,profile_pass,deterministic_bwd,time_ms,tflops,max_diff,num_iterations,sliding_window_size,success,error_message,gpu_name,cudnn_version,cudnn_backend_version
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,7800,7800,40,40,128,128,fwd,False,0.422,2951.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,7800,7800,40,40,128,128,bwd,False,1.349,2310.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,7800,7800,40,40,128,128,bwd,True,1.634,1907.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,17160,17160,40,40,128,128,fwd,False,1.799,3351.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,17160,17160,40,40,128,128,bwd,False,6.097,2473.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,17160,17160,40,40,128,128,bwd,True,7.191,2097.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,32760,32760,40,40,128,128,fwd,False,6.351,3461.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,32760,32760,40,40,128,128,bwd,False,22.704,2420.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,32760,32760,40,40,128,128,bwd,True,26.162,2100.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,48360,48360,40,40,128,128,fwd,False,14.927,3209.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,48360,48360,40,40,128,128,bwd,False,50.102,2390.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,48360,48360,40,40,128,128,bwd,True,56.858,2106.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,75600,75600,40,40,128,128,fwd,False,33.854,3458.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,75600,75600,40,40,128,128,bwd,False,125.239,2337.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900
+wan22,wan22_a14b,cudnn,bfloat16,no_mask,1,75600,75600,40,40,128,128,bwd,True,143.098,2045.000,0.000,10,,True,,NVIDIA Graphics Device,1.21.1,109900

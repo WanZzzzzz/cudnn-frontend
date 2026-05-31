@@ -109,7 +109,6 @@ outputs = grouped_gemm_quant_wrapper_sm100(
     norm_const_tensor=norm_const,  # Required when SFD outputs are enabled (FP8 inputs)
     prob_tensor=prob,
     acc_dtype=torch.float32,
-    c_dtype=torch.bfloat16,
     d_dtype=torch.bfloat16,
     cd_major="n",
     mma_tiler_mn=(256, 256),
@@ -123,13 +122,13 @@ outputs = grouped_gemm_quant_wrapper_sm100(
 
 # dictionary access:
 d = outputs["d_tensor"]             # row-quantized output
-d_col = outputs["d_col_tensor"]     # column-quantized output
+d_col = outputs["d_col_tensor"]     # None for bf16/fp16/fp32 outputs; tensor only for low-precision outputs
 amax = outputs["amax_tensor"]       # per-group amax (when d_dtype is bf16/float16)
 sfd_row = outputs["sfd_row_tensor"] # row scale factors (when SFD outputs are enabled, FP8 inputs)
 sfd_col = outputs["sfd_col_tensor"] # column scale factors (when SFD outputs are enabled, FP8 inputs)
 
 # or tuple unpacking:
-d, d_col, amax, sfd_row, sfd_col = outputs
+d, d_col, amax, sfd_row, sfd_col = outputs  # d_col is None for bf16/fp16/fp32 outputs
 ```
 
 ### Class API
@@ -210,6 +209,7 @@ api.execute(
   - Shape: `(valid_m, N, 1)`
   - Stride: `(N, 1, valid_m·N)` – must match D (N-major)
   - Dtype: Must match D
+  - Wrapper behavior: returned only when `d_dtype ∈ {float8_e4m3fn, float8_e5m2, float4_e2m1fn_x2}`; for `bfloat16`, `float16`, and `float32`, `outputs["d_col_tensor"]` is `None`
 
 - **Input tensor prob**: `prob_tensor` (wrapper) or `sample_prob` (class)
   - Shape: `(valid_m, 1, 1)`
@@ -287,7 +287,6 @@ api.execute(
 
 ### Wrapper-specific Parameters: `grouped_gemm_quant_wrapper_sm100`
 
-- `c_dtype: torch.dtype`: Internal C tensor data type (not user-visible). Default: `torch.bfloat16`
 - `d_dtype: torch.dtype`: Output D tensor data type. Default: `torch.bfloat16`
 - `cd_major: str`: Major dimension for D tensors. Must be `"n"` (only N-major layout is supported). Default: `"n"`
 
@@ -297,7 +296,7 @@ Returns a `TupleDict` - a dictionary-like object that also supports tuple unpack
 
 **Dictionary keys** (also the tuple unpacking order):
 - `d_tensor`: Row-quantized output
-- `d_col_tensor`: Column-quantized output
+- `d_col_tensor`: Optional column-quantized output; `None` when `d_dtype ∈ {bfloat16, float16, float32}`
 - `amax_tensor`: Per-group amax (when `d_dtype ∈ {bfloat16, float16}`)
 - `sfd_row_tensor`: Row scale factors (when SFD outputs are enabled)
 - `sfd_col_tensor`: Column scale factors (when SFD outputs are enabled)
@@ -342,7 +341,6 @@ Returns a `TupleDict` - a dictionary-like object that also supports tuple unpack
 - `sf_dtype=float8_e4m3fn` is incompatible with `sf_vec_size=32`
 - FP8 `ab_dtype` is incompatible with `sf_vec_size=16`
 - FP4 `ab_dtype` with `sf_vec_size=16` and `d_dtype=float32` is not supported
-- FP4 `ab_dtype` requires `c_dtype ∈ {float16, bfloat16}`
 
 ### Scale Factor Output Requirements
 

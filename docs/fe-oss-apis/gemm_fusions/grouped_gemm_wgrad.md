@@ -26,6 +26,11 @@ The grouped dimension is the token axis, segmented by `offsets_tensor`.
 - `offsets_tensor`: cumulative end offsets per expert, shape `(num_experts,)`, dtype `torch.int32`
 - `global_scale_a` / `global_scale_b`: optional per-expert global scales. These are required for NVFP4 (`sf_vec_size == 16` with FP4 inputs).
 
+`input_order` selects how `a_tensor` and `b_tensor` are interpreted by the kernel:
+
+- `"tensor2d"` (default): the token axis is one contiguous 2-D tensor.
+- `"tensor_ragged"`: each expert's token block is laid out independently in memory and concatenated expert-major; the kernel builds per-expert TMA descriptors for A and B.
+
 ## Output Modes
 
 The API supports two output modes through one public surface:
@@ -50,6 +55,7 @@ result = cudnn.grouped_gemm_wgrad_wrapper_sm100(
     offsets_tensor=offsets_tensor,
     output_mode="dense",
     wgrad_dtype=torch.bfloat16,
+    input_order="tensor_ragged",
 )
 
 wgrad_tensor = result["wgrad_tensor"]

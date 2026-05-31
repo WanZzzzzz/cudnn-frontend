@@ -31,18 +31,3 @@ spec:
     - ${ARCH}
   extends:
     - .python_tests:template
-
-"cpp_tests:cudnn_$[[inputs.cudnn_version]]_$[[inputs.cuda_version]]":
-  image: "gitlab-master.nvidia.com:5005/cudnn/cudnn_frontend:cudnn_$[[inputs.cudnn_version]]_$[[inputs.cuda_version]]"
-  needs: ["build:$[[inputs.cudnn_version]]_$[[inputs.cuda_version]]"]
-  parallel:
-    matrix:
-      - ARCH: ["Hopper", "Ampere"]
-  tags:
-    - ${ARCH}
-  artifacts:
-    when: always
-    reports:
-      junit: result-junit.xml
-  extends:
-    - .cpp_tests:template

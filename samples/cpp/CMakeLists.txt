@@ -63,6 +63,14 @@ add_executable(
     misc/sm_carveout.cpp
     misc/cudagraphs.cpp
     misc/deviceless_aot_compilation.cpp
+    misc/compile_time_constant_example.cpp
+
+    membound/transpose.cpp
+    membound/reshape.cpp
+    membound/slice.cpp
+    membound/concat.cpp
+    membound/membound_fusion.cpp
+    membound/boolean_fusion.cpp
 
     causal_conv1d/causal_conv1d.cpp
 )

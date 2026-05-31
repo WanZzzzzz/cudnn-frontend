@@ -123,7 +123,7 @@ class GroupedGemmSwigluSm100(APIBase):
         """
         super().__init__()
 
-        self._logger.warning("GroupedGemmSwigluSm100 is an experimental API")
+        self._warn_experimental_api()
         self._logger.debug("Entering __init__")
 
         # Store sample tensor descriptors
@@ -168,7 +168,7 @@ class GroupedGemmSwigluSm100(APIBase):
         self._kernel = BlockScaledContiguousGroupedGemmKernel
 
         self.num_cluster_overlap_margin = int(os.getenv("CUDNNFE_CLUSTER_OVERLAP_MARGIN", "0"))
-        print(f"setting num_cluster_overlap_margin: {self.num_cluster_overlap_margin}")
+        self._logger.debug(f"setting num_cluster_overlap_margin: {self.num_cluster_overlap_margin}")
         self._logger.debug(f"__init__ completed")
 
     def check_support(self) -> bool:
@@ -482,7 +482,7 @@ class GroupedGemmSwigluSm100(APIBase):
         fake_stream = make_fake_stream(use_tvm_ffi_env_stream=False)
 
         self._logger.debug("Compiling grouped_gemm_swiglu kernel")
-        use_full_dynamic = os.environ.get("CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL") is not None
+        use_full_dynamic = os.environ.get("CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL", "1") != "0"
         if not use_full_dynamic:  # only mark the m dimension as dynamic
             valid_m = cute.sym_int(divisibility=256)
 
@@ -924,7 +924,7 @@ def grouped_gemm_swiglu_wrapper_sm100(
             sfd_col_tensor=sfd_col_tensor,
         )
 
-    use_full_dynamic = os.environ.get("CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL") is not None
+    use_full_dynamic = os.environ.get("CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL", "1") != "0"
 
     def stride_order(tensor: torch.Tensor) -> Tuple[int, ...]:
         return tuple(i for i, s in sorted(enumerate(tensor.stride()), key=lambda x: x[1]))

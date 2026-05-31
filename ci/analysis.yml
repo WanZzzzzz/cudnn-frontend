@@ -69,6 +69,23 @@ analysis:clang-format:
     extends:
         - .analysis_job_template
 
+analysis:guardwords_scan:
+    needs: []
+    stage: analysis
+    allow_failure: true
+    variables:
+        GUARDWORDS_REPO: "gitlab-master.nvidia.com/dlswqa/cudnn/flashinfer-guardwords-scan.git"
+        GUARDWORDS_DIR: "/tmp/guardwords-scan"
+    script:
+        - git clone --depth 1
+            "https://gitlab-ci-token:${CI_JOB_TOKEN}@${GUARDWORDS_REPO}"
+            "${GUARDWORDS_DIR}"
+        - python3 "${GUARDWORDS_DIR}/flashinfer_scan.py"
+            --mode full
+            --repo-root "${CI_PROJECT_DIR}"
+    extends:
+        - .analysis_job_template
+
 # ==============================================================================
 # Sanitizer (ASan + UBSan) Jobs
 # Build once, then run all test suites with sanitizer-instrumented binaries.

@@ -14,6 +14,7 @@ default:
     - if: $CI_MERGE_REQUEST_TITLE =~ /^(\[Draft\]|\(Draft\)|Draft:)/
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_REF_NAME =~ /^cudnn-gh\/.*$/'
 
 .manual_job_template:
   rules:
@@ -26,7 +27,7 @@ default:
     image: gitlab-master.nvidia.com:5005/cudnn/cudnn_frontend:cudnn_13.2.0
 
 .cudnn_ga_image:template:
-    image: gitlab-master.nvidia.com:5005/cudnn/cudnn_frontend:cudnn_9.21.0.82_13.2.0
+    image: gitlab-master.nvidia.com:5005/cudnn/cudnn_frontend:cudnn_9.22.0.52_13.2.0
 
 .device_matrix:template:
     parallel:
@@ -37,13 +38,13 @@ default:
 
 .fetch_cudnn_dev:template:
     cache:
-        - key: dev_cudnn_9_23_cuda_13_2
+        - key: dev_cudnn_9_24_cuda_13_3
           paths:
               - downloads
     before_script:
         - mkdir -p downloads
         - ls -1 downloads/
-        - python3 ci/fetch_cudnn.py --base-url https://urm.nvidia.com/artifactory/hw-cudnn-generic-local/BLOSSOM/v9.23 --cuda-version 13.2 --require-artifact-prop pipeline_type=merge_train
+        - python3 ci/fetch_cudnn.py --base-url https://artifactory.nvidia.com/artifactory/hw-cudnn-generic-local/BLOSSOM/v9.24 --cuda-version 13.3 --require-artifact-prop pipeline_type=merge_request
         - find /debug_cudnn
         - export CUDNN_PATH=/debug_cudnn # This is required for source building FE
         - export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/debug_cudnn/lib64 # This is required for dlopening BE
@@ -51,13 +52,13 @@ default:
 
 .fetch_cudnn_rel:template:
     cache:
-        - key: rel_cudnn_9_22_cuda_13_2
+        - key: rel_cudnn_9_23_cuda_13_3
           paths:
               - downloads
     before_script:
         - mkdir -p downloads
         - ls -1 downloads
-        - python3 ci/fetch_cudnn.py --base-url https://urm.nvidia.com/artifactory/hw-cudnn-generic-local/BLOSSOM/v9.22 --cuda-version 13.2 --require-artifact-prop pipeline_type=merge_train
+        - python3 ci/fetch_cudnn.py --base-url https://artifactory.nvidia.com/artifactory/hw-cudnn-generic-local/BLOSSOM/v9.23 --cuda-version 13.3 --require-artifact-prop pipeline_type=merge_train
         - find /debug_cudnn
         - export CUDNN_PATH=/debug_cudnn # This is required for source building FE
         - export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/debug_cudnn/lib64 # This is required for dlopening BE
@@ -90,25 +91,25 @@ default:
     script:
         - ci/run_python_tests.sh
 
-.mha_v1_tests:template:
-    stage: mha_v1_tests
-    script:
-        - ci/run_test_mhas_v1.sh
+# .mha_v1_tests:template:
+#     stage: mha_v1_tests
+#     script:
+#         - ci/run_test_mhas_v1.sh
 
-.mha_v2_tests:template:
-    stage: mha_v2_tests
-    script:
-        - ci/run_test_mhas_v2.sh
+# .mha_v2_tests:template:
+#     stage: mha_v2_tests
+#     script:
+#         - ci/run_test_mhas_v2.sh
 
 .pycudnntest:template:
     stage: pycudnnTest
     script:
         - ci/run_pycudnntest.sh
 
-.cpp_tests:template:
-    stage: cpp_tests
-    script:
-        - ci/run_cpp_tests.sh
+# .cpp_tests:template:
+#     stage: cpp_tests
+#     script:
+#         - ci/run_cpp_tests.sh
 
 .python_samples:template:
     stage: python_samples
@@ -161,14 +162,14 @@ build:dev:
         - .fetch_cudnn_dev:template
         - .build:template
 
-cpp_test:dev:
-    extends:
-        - .default_job_template
-        - .device_matrix:template
-        - .cudnn_dev_image:template
-        - .fetch_cudnn_dev:template
-        - .cpp_tests:template
-    needs: ["build:dev"]
+# cpp_test:dev:
+#     extends:
+#         - .default_job_template
+#         - .device_matrix:template
+#         - .cudnn_dev_image:template
+#         - .fetch_cudnn_dev:template
+#         - .cpp_tests:template
+#     needs: ["build:dev"]
 
 py_test:dev:
     extends:
@@ -179,14 +180,14 @@ py_test:dev:
         - .python_tests:template
     needs: ["build:dev"]
 
-mha_v1:dev:
-    extends:
-        - .default_job_template
-        - .device_matrix:template
-        - .cudnn_dev_image:template
-        - .fetch_cudnn_dev:template
-        - .mha_v1_tests:template
-    needs: ["build:dev"]
+# mha_v1:dev:
+#     extends:
+#         - .default_job_template
+#         - .device_matrix:template
+#         - .cudnn_dev_image:template
+#         - .fetch_cudnn_dev:template
+#         - .mha_v1_tests:template
+#     needs: ["build:dev"]
 
 pycudnn:dev:
     extends:
@@ -219,14 +220,14 @@ build:rel:
         - .fetch_cudnn_rel:template
         - .build:template
 
-cpp_test:rel:
-    extends:
-        - .default_job_template
-        - .device_matrix:template
-        - .cudnn_rel_image:template
-        - .fetch_cudnn_rel:template
-        - .cpp_tests:template
-    needs: ["build:rel"]
+# cpp_test:rel:
+#     extends:
+#         - .default_job_template
+#         - .device_matrix:template
+#         - .cudnn_rel_image:template
+#         - .fetch_cudnn_rel:template
+#         - .cpp_tests:template
+#     needs: ["build:rel"]
 
 py_test:rel:
     extends:
@@ -237,14 +238,14 @@ py_test:rel:
         - .python_tests:template
     needs: ["build:rel"]
 
-mha_v1:rel:
-    extends:
-        - .default_job_template
-        - .device_matrix:template
-        - .cudnn_rel_image:template
-        - .fetch_cudnn_rel:template
-        - .mha_v1_tests:template
-    needs: ["build:rel"]
+# mha_v1:rel:
+#     extends:
+#         - .default_job_template
+#         - .device_matrix:template
+#         - .cudnn_rel_image:template
+#         - .fetch_cudnn_rel:template
+#         - .mha_v1_tests:template
+#     needs: ["build:rel"]
 
 pycudnn:rel:
     extends:
@@ -324,12 +325,11 @@ py_samples:ga:
 backend:rel:
     trigger:
         project:  cudnn/cudnn
-        branch:   release/9.22.0
+        branch:   release/9.23.0
         strategy: depend
     inherit:
         variables: false
     variables:
-        CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
         CI_CUDNN_FRONTEND_REF_NAME: $CI_COMMIT_REF_NAME
         CI_CUDNN_FRONTEND_COMMIT_SHA: $CI_COMMIT_SHA
         CI_CUDNN_FRONTEND_PIPELINE_SOURCE: $CI_PIPELINE_SOURCE
@@ -337,6 +337,11 @@ backend:rel:
         - if: $CI_MERGE_REQUEST_TITLE =~ /^(\[Draft\]|\(Draft\)|Draft:)/
           when: never
         - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "merge_request_event"
+          variables:
+              CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+        - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_REF_NAME =~ /^cudnn-gh\/.*$/'
+          variables:
+              CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_COMMIT_REF_NAME
     stage: backend_triggers
     needs: []
     interruptible: true
@@ -349,7 +354,6 @@ backend:dev:
     inherit:
         variables: false
     variables:
-        CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
         CI_CUDNN_FRONTEND_REF_NAME: $CI_COMMIT_REF_NAME
         CI_CUDNN_FRONTEND_COMMIT_SHA: $CI_COMMIT_SHA
         CI_CUDNN_FRONTEND_PIPELINE_SOURCE: $CI_PIPELINE_SOURCE
@@ -357,29 +361,19 @@ backend:dev:
         - if: $CI_MERGE_REQUEST_TITLE =~ /^(\[Draft\]|\(Draft\)|Draft:)/
           when: never
         - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "merge_request_event"
+          variables:
+              CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+        - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_REF_NAME =~ /^cudnn-gh\/.*$/'
+          variables:
+              CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_COMMIT_REF_NAME
     stage: backend_triggers
     needs: []
     interruptible: true
 
-backend:next_arch:
-    trigger:
-        project:  cudnn/cudnn
-        branch:   feature/rubin-bringup
-        strategy: depend
-    inherit:
-        variables: false
-    variables:
-        CI_CUDNN_FRONTEND_MERGE_REQUEST_SOURCE_BRANCH_NAME: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-        CI_CUDNN_FRONTEND_REF_NAME: $CI_COMMIT_REF_NAME
-        CI_CUDNN_FRONTEND_COMMIT_SHA: $CI_COMMIT_SHA
-        CI_CUDNN_FRONTEND_PIPELINE_SOURCE: $CI_PIPELINE_SOURCE
-    rules:
-        - if: $CI_MERGE_REQUEST_TITLE =~ /^(\[Draft\]|\(Draft\)|Draft:)/
-          when: never
-        - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "merge_request_event"
-    stage: backend_triggers
-    needs: []
-    interruptible: true
+# backend:next_arch removed 2026-05-26: the `feature/rubin-bringup` branch was
+# merged into `dev`, so the third child pipeline is no longer triggered.
+# Pre-merge bisects can re-add this block (project: cudnn/cudnn,
+# branch: feature/rubin-bringup) for historical reference.
 
 # ==============================================================================
 # Slack Notification

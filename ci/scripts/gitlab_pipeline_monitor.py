@@ -110,10 +110,7 @@ class GitLabPipelineMonitor:
         self.verbose = verbose
 
         if not self.private_token:
-            raise ValueError(
-                "GitLab private token required. "
-                "Set GITLAB_PRIVATE_TOKEN environment variable or pass --token"
-            )
+            raise ValueError("GitLab private token required. " "Set GITLAB_PRIVATE_TOKEN environment variable or pass --token")
 
         self.api_url = f"{self.gitlab_url}/api/v4"
         self.project_id = self._get_project_id()
@@ -140,9 +137,7 @@ class GitLabPipelineMonitor:
         self._log(f"API Request: {url}")
 
         try:
-            response = requests.get(
-                url, headers=self.headers, params=params, timeout=30
-            )
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -151,9 +146,7 @@ class GitLabPipelineMonitor:
                 print(f"Response: {e.response.text}")
             raise
 
-    def get_scheduled_pipelines(
-        self, ref: str = "develop", count: int = 2
-    ) -> List[Pipeline]:
+    def get_scheduled_pipelines(self, ref: str = "develop", count: int = 2) -> List[Pipeline]:
         """
         Get the last N scheduled pipeline runs for a branch.
 
@@ -232,14 +225,10 @@ class GitLabPipelineMonitor:
                 break
             page += 1
 
-        self._log(
-            f"Found {len(jobs)} jobs, {len([j for j in jobs if j.is_failed])} failed"
-        )
+        self._log(f"Found {len(jobs)} jobs, {len([j for j in jobs if j.is_failed])} failed")
         return jobs
 
-    def compare_pipelines(
-        self, current: Pipeline, previous: Pipeline
-    ) -> Tuple[List[Job], List[Job], List[Job]]:
+    def compare_pipelines(self, current: Pipeline, previous: Pipeline) -> Tuple[List[Job], List[Job], List[Job]]:
         """
         Compare two pipelines and identify new, fixed, and persistent failures.
 
@@ -259,12 +248,8 @@ class GitLabPipelineMonitor:
 
         # Get the actual Job objects
         new_failures = [j for j in current.failed_jobs if j.name in new_failure_names]
-        fixed_failures = [
-            j for j in previous.failed_jobs if j.name in fixed_failure_names
-        ]
-        persistent_failures = [
-            j for j in current.failed_jobs if j.name in persistent_failure_names
-        ]
+        fixed_failures = [j for j in previous.failed_jobs if j.name in fixed_failure_names]
+        persistent_failures = [j for j in current.failed_jobs if j.name in persistent_failure_names]
 
         return new_failures, fixed_failures, persistent_failures
 
@@ -310,9 +295,7 @@ class GitLabPipelineMonitor:
         print(f"            URL: {previous_pipeline.web_url}")
 
         # Compare pipelines
-        new_failures, fixed_failures, persistent_failures = self.compare_pipelines(
-            current_pipeline, previous_pipeline
-        )
+        new_failures, fixed_failures, persistent_failures = self.compare_pipelines(current_pipeline, previous_pipeline)
 
         results = {
             "current_pipeline": {
@@ -331,17 +314,9 @@ class GitLabPipelineMonitor:
                 "total_jobs": len(previous_pipeline.jobs),
                 "failed_jobs": len(previous_pipeline.failed_jobs),
             },
-            "new_failures": [
-                {"name": j.name, "stage": j.stage, "url": j.web_url}
-                for j in new_failures
-            ],
-            "fixed_failures": [
-                {"name": j.name, "stage": j.stage} for j in fixed_failures
-            ],
-            "persistent_failures": [
-                {"name": j.name, "stage": j.stage, "url": j.web_url}
-                for j in persistent_failures
-            ],
+            "new_failures": [{"name": j.name, "stage": j.stage, "url": j.web_url} for j in new_failures],
+            "fixed_failures": [{"name": j.name, "stage": j.stage} for j in fixed_failures],
+            "persistent_failures": [{"name": j.name, "stage": j.stage, "url": j.web_url} for j in persistent_failures],
         }
 
         # Print results
@@ -381,12 +356,8 @@ class GitLabPipelineMonitor:
         print(f"\n{'='*60}")
         print("SUMMARY")
         print(f"{'='*60}")
-        print(
-            f"  Current pipeline:  {len(current_pipeline.failed_jobs)} failed / {len(current_pipeline.jobs)} total"
-        )
-        print(
-            f"  Previous pipeline: {len(previous_pipeline.failed_jobs)} failed / {len(previous_pipeline.jobs)} total"
-        )
+        print(f"  Current pipeline:  {len(current_pipeline.failed_jobs)} failed / {len(current_pipeline.jobs)} total")
+        print(f"  Previous pipeline: {len(previous_pipeline.failed_jobs)} failed / {len(previous_pipeline.jobs)} total")
         print(f"  New failures:      {len(new_failures)}")
         print(f"  Fixed:             {len(fixed_failures)}")
         print(f"  Persistent:        {len(persistent_failures)}")
@@ -420,26 +391,16 @@ class GitLabPipelineMonitor:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Monitor GitLab nightly pipeline runs and detect new failures"
-    )
-    parser.add_argument(
-        "--token", help="GitLab private token (or set GITLAB_PRIVATE_TOKEN env var)"
-    )
+    parser = argparse.ArgumentParser(description="Monitor GitLab nightly pipeline runs and detect new failures")
+    parser.add_argument("--token", help="GitLab private token (or set GITLAB_PRIVATE_TOKEN env var)")
     parser.add_argument(
         "--gitlab-url",
         default="https://gitlab-master.nvidia.com",
         help="GitLab instance URL",
     )
-    parser.add_argument(
-        "--project", default="cudnn/cudnn_frontend", help="GitLab project path"
-    )
-    parser.add_argument(
-        "--ref", default="develop", help="Branch to monitor (default: develop)"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
+    parser.add_argument("--project", default="cudnn/cudnn_frontend", help="GitLab project path")
+    parser.add_argument("--ref", default="develop", help="Branch to monitor (default: develop)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
 
     args = parser.parse_args()

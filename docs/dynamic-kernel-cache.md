@@ -43,6 +43,17 @@ Execution API with overrides:
 graph->execute(handle, variant_pack, workspace_ptr, override_uids, override_shapes, override_strides)
 ```
 
+When using override shape, query the workspace for the actual runtime shape immediately before allocating the workspace:
+```cpp
+int64_t workspace_size = 0;
+graph->get_workspace_size(handle, workspace_size, override_uids, override_shapes, override_strides);
+Surface<int8_t> workspace(workspace_size);
+
+graph->execute(handle, variant_pack, workspace.devPtr, override_uids, override_shapes, override_strides);
+```
+
+This runtime workspace query may return a different size than the workspace queried for the cache shape used to build the graph. Allocate the workspace after this query for each set of override shapes.
+
 Where:
 - `override_uids`: list of tensor UIDs whose shapes are being overridden
 - `override_shapes`: new shape for each tensor in `override_uids` (each element is a `std::vector<int64_t>`)

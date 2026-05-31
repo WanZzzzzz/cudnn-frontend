@@ -20,10 +20,10 @@ do
     wheel=many_linux_wheels/${wheel_name}
     if [[ $CI_COMMIT_BRANCH == "main" ]]; then
         echo "main branch" 
-        curl -fsS -u agopal:$JFROG_API_KEY -T "${wheel}" "https://urm.nvidia.com/artifactory/hw-cudnn-generic/CUDNN/cudnn_frontend/main/${DATE_FOLDER}/${wheel_name}"
+        curl -fsS -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -T "${wheel}" "https://artifactory.nvidia.com/artifactory/hw-cudnn-generic-local/CUDNN/cudnn_frontend/main/${DATE_FOLDER}/${wheel_name}"
     elif [[ $CI_COMMIT_BRANCH == "develop" ]]; then 
         echo "develop branch"
-        curl -fsS -u agopal:${JFROG_API_KEY} -T "${wheel}" "https://urm.nvidia.com/artifactory/hw-cudnn-generic/CUDNN/cudnn_frontend/develop/latest/${wheel_name}"
+        curl -fsS -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -T "${wheel}" "https://artifactory.nvidia.com/artifactory/hw-cudnn-generic-local/CUDNN/cudnn_frontend/develop/latest/${wheel_name}"
     else 
        echo $CI_COMMIT_BRANCH
        echo "Not posting to artifactory"

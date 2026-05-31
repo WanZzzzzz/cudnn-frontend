@@ -8,14 +8,14 @@ Can compare current pipeline with previous run to identify new failures.
 Usage:
     # As part of GitLab CI (uses CI environment variables)
     python pipeline_slack_notifier.py
-    
+
     # Manual run with specific pipeline
     python pipeline_slack_notifier.py --pipeline-id 39953675
 
 Environment Variables Required:
     SLACK_WEBHOOK_URL: Slack incoming webhook URL
     GITLAB_PRIVATE_TOKEN: GitLab API token (or CI_JOB_TOKEN in CI)
-    
+
 GitLab CI Variables (automatically set):
     CI_PIPELINE_ID: Current pipeline ID
     CI_PIPELINE_URL: Pipeline URL
@@ -101,9 +101,7 @@ class SlackNotifier:
             payload["attachments"] = message["attachments"]
             # Extract text from attachment if present
             if message["attachments"] and "text" in message["attachments"][0]:
-                payload["text"] = (
-                    "Pipeline Status Update"  # Fallback text for notifications
-                )
+                payload["text"] = "Pipeline Status Update"  # Fallback text for notifications
         elif "text" in message:
             payload["text"] = message["text"]
 
@@ -124,9 +122,7 @@ class SlackNotifier:
                 if result.get("error") == "channel_not_found":
                     print(f"  → Make sure the bot is added to channel: {self.channel}")
                 elif result.get("error") == "not_in_channel":
-                    print(
-                        f"  → Invite the bot to the channel first: /invite @YourBotName"
-                    )
+                    print(f"  → Invite the bot to the channel first: /invite @YourBotName")
                 return False
 
             print(f"✅ Posted to Slack channel: {self.channel}")
@@ -169,15 +165,11 @@ class SlackNotifier:
 
         # Pipeline Comparison
         lines.append("📊 *Pipeline Comparison:*")
-        lines.append(
-            f"  *Current:*  <{current_pipeline['web_url']}|#{current_pipeline['id']}>"
-        )
+        lines.append(f"  *Current:*  <{current_pipeline['web_url']}|#{current_pipeline['id']}>")
         lines.append(f"            Status: `{current_pipeline['status']}`")
 
         if previous_pipeline:
-            lines.append(
-                f"  *Previous:* <{previous_pipeline['web_url']}|#{previous_pipeline['id']}>"
-            )
+            lines.append(f"  *Previous:* <{previous_pipeline['web_url']}|#{previous_pipeline['id']}>")
 
         lines.append("")
         lines.append("=" * 50)
@@ -220,13 +212,9 @@ class SlackNotifier:
         lines.append("=" * 50)
         lines.append("*SUMMARY*")
         lines.append("=" * 50)
-        lines.append(
-            f"  Current pipeline:  {current_pipeline.get('failed_jobs', 0)} failed / {current_pipeline.get('total_jobs', 0)} total"
-        )
+        lines.append(f"  Current pipeline:  {current_pipeline.get('failed_jobs', 0)} failed / {current_pipeline.get('total_jobs', 0)} total")
         if previous_pipeline:
-            lines.append(
-                f"  Previous pipeline: {previous_pipeline.get('failed_jobs', '?')} failed"
-            )
+            lines.append(f"  Previous pipeline: {previous_pipeline.get('failed_jobs', '?')} failed")
         lines.append(f"  New failures:      {len(new_failures)}")
         lines.append(f"  Fixed:             {len(fixed_failures)}")
         lines.append(f"  Persistent:        {len(persistent_failures)}")
@@ -234,9 +222,7 @@ class SlackNotifier:
 
         # Final status message
         if new_failures:
-            lines.append(
-                f"⚠️  *ACTION REQUIRED:* {len(new_failures)} new failure(s) detected!"
-            )
+            lines.append(f"⚠️  *ACTION REQUIRED:* {len(new_failures)} new failure(s) detected!")
         else:
             lines.append("✅ *All clear:* No new failures in the latest nightly run.")
 
@@ -246,9 +232,7 @@ class SlackNotifier:
         text = "\n".join(lines)
 
         # Build the final message
-        message = {
-            "attachments": [{"color": color, "text": text, "mrkdwn_in": ["text"]}]
-        }
+        message = {"attachments": [{"color": color, "text": text, "mrkdwn_in": ["text"]}]}
 
         return self.send_message(message)
 
@@ -262,32 +246,24 @@ def get_ci_environment() -> Dict[str, str]:
         "ref": os.environ.get("CI_COMMIT_REF_NAME", "develop"),
         "source": os.environ.get("CI_PIPELINE_SOURCE"),
         "job_token": os.environ.get("CI_JOB_TOKEN"),
-        "gitlab_url": os.environ.get(
-            "CI_SERVER_URL", "https://gitlab-master.nvidia.com"
-        ),
+        "gitlab_url": os.environ.get("CI_SERVER_URL", "https://gitlab-master.nvidia.com"),
     }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Post pipeline status to Slack")
-    parser.add_argument(
-        "--webhook-url", help="Slack webhook URL (or set SLACK_WEBHOOK_URL env var)"
-    )
+    parser.add_argument("--webhook-url", help="Slack webhook URL (or set SLACK_WEBHOOK_URL env var)")
     parser.add_argument(
         "--bot-token",
         help="Slack Bot User OAuth Token (xoxb-...) (or set SLACK_BOT_TOKEN env var)",
     )
-    parser.add_argument(
-        "--token", help="GitLab private token (or set GITLAB_PRIVATE_TOKEN env var)"
-    )
+    parser.add_argument("--token", help="GitLab private token (or set GITLAB_PRIVATE_TOKEN env var)")
     parser.add_argument(
         "--pipeline-id",
         type=int,
         help="Pipeline ID to report on (default: current CI pipeline)",
     )
-    parser.add_argument(
-        "--ref", default="develop", help="Branch name (default: develop)"
-    )
+    parser.add_argument("--ref", default="develop", help="Branch name (default: develop)")
     parser.add_argument(
         "--channel",
         help="Slack channel to post to (e.g., #cudnn-frontend-ci). Overrides webhook default.",
@@ -302,9 +278,7 @@ def main():
         action="store_true",
         help="Print message instead of sending to Slack",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
@@ -314,18 +288,14 @@ def main():
     slack_webhook = args.webhook_url or os.environ.get("SLACK_WEBHOOK_URL")
     slack_bot_token = args.bot_token or os.environ.get("SLACK_BOT_TOKEN")
     slack_channel = args.channel or os.environ.get("SLACK_CHANNEL")
-    gitlab_token = (
-        args.token or os.environ.get("GITLAB_PRIVATE_TOKEN") or ci_env["job_token"]
-    )
+    gitlab_token = args.token or os.environ.get("GITLAB_PRIVATE_TOKEN") or ci_env["job_token"]
     ref = args.ref or ci_env["ref"]
 
     if not slack_webhook and not slack_bot_token and not args.dry_run:
         print("Error: Slack webhook URL or Bot Token required")
         print("Options:")
         print("  1. Set SLACK_WEBHOOK_URL environment variable or use --webhook-url")
-        print(
-            "  2. Set SLACK_BOT_TOKEN environment variable or use --bot-token (requires --channel)"
-        )
+        print("  2. Set SLACK_BOT_TOKEN environment variable or use --bot-token (requires --channel)")
         sys.exit(1)
 
     if slack_bot_token and not slack_channel and not args.dry_run:
@@ -365,25 +335,16 @@ def main():
 
         # Compare
         if previous:
-            new_failures, fixed_failures, persistent_failures = (
-                monitor.compare_pipelines(current, previous)
-            )
+            new_failures, fixed_failures, persistent_failures = monitor.compare_pipelines(current, previous)
         else:
             new_failures = current.failed_jobs
             fixed_failures = []
             persistent_failures = []
 
         # Convert to dicts for Slack
-        new_failures_dict = [
-            {"name": j.name, "stage": j.stage, "url": j.web_url} for j in new_failures
-        ]
-        fixed_failures_dict = [
-            {"name": j.name, "stage": j.stage} for j in fixed_failures
-        ]
-        persistent_failures_dict = [
-            {"name": j.name, "stage": j.stage, "url": j.web_url}
-            for j in persistent_failures
-        ]
+        new_failures_dict = [{"name": j.name, "stage": j.stage, "url": j.web_url} for j in new_failures]
+        fixed_failures_dict = [{"name": j.name, "stage": j.stage} for j in fixed_failures]
+        persistent_failures_dict = [{"name": j.name, "stage": j.stage, "url": j.web_url} for j in persistent_failures]
 
         current_dict = {
             "id": current.id,
@@ -393,11 +354,7 @@ def main():
             "total_jobs": len(current.jobs),
         }
 
-        previous_dict = (
-            {"id": previous.id, "status": previous.status, "web_url": previous.web_url}
-            if previous
-            else None
-        )
+        previous_dict = {"id": previous.id, "status": previous.status, "web_url": previous.web_url} if previous else None
 
         # Print summary
         print(f"\n{'='*50}")
@@ -469,9 +426,7 @@ def main():
             lines.append("=" * 50)
             lines.append("SUMMARY")
             lines.append("=" * 50)
-            lines.append(
-                f"  Current pipeline:  {current_dict.get('failed_jobs', 0)} failed / {current_dict.get('total_jobs', 0)} total"
-            )
+            lines.append(f"  Current pipeline:  {current_dict.get('failed_jobs', 0)} failed / {current_dict.get('total_jobs', 0)} total")
             if previous_dict:
                 lines.append(f"  Previous pipeline: (compared)")
             lines.append(f"  New failures:      {len(new_failures_dict)}")
@@ -479,9 +434,7 @@ def main():
             lines.append(f"  Persistent:        {len(persistent_failures_dict)}")
             lines.append("")
             if new_failures_dict:
-                lines.append(
-                    f"⚠️  ACTION REQUIRED: {len(new_failures_dict)} new failure(s) detected!"
-                )
+                lines.append(f"⚠️  ACTION REQUIRED: {len(new_failures_dict)} new failure(s) detected!")
             else:
                 lines.append("✅ All clear: No new failures in the latest nightly run.")
             lines.append("=" * 50)

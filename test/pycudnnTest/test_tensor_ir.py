@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from collections import namedtuple
 import inspect
 from functools import lru_cache
+import math
 import random
 import string
 from tensor_ir_utils import CompilerWithKernelCacheSingleton
@@ -542,6 +543,7 @@ def calculate_stride_div_from_alignment(
     stride_dynamic,
     stride,
     dtype_width,
+    shape=None,
 ):
     """Calculate stride divisibility from stride layout.
 
@@ -549,6 +551,10 @@ def calculate_stride_div_from_alignment(
         stride_dynamic: List of stride placeholders (0 for broadcast, 1 for leading, etc.)
         stride: List of actual stride values
         dtype_width: Data type width in bits
+        shape: Optional list of shape values; dims with shape==1 are treated as
+            broadcast-like (same effect as stride==0), so the TMA alignment div
+            still lands on the leading dim under the new
+            shape=1+dyn-stride convention.
 
     Returns:
         List of stride divisibility values
@@ -569,15 +575,16 @@ def calculate_stride_div_from_alignment(
     stride_div = []
     tma_requirement_in_bits = 128
     stride_div_flag = True
-    has_stride_zero = False
+    has_broadcast_dim = False
 
     for idx, s in enumerate(stride_dynamic):
-        if s == 0:
+        is_broadcast_dim = (s == 0) or (shape is not None and shape[idx] == 1)
+        if is_broadcast_dim:
             stride_div.append(1)
-            has_stride_zero = True
+            has_broadcast_dim = True
         else:
             if s != 1:
-                if stride_div_flag and has_stride_zero:
+                if stride_div_flag and has_broadcast_dim:
                     actual_stride_div = calculate_actual_divisibility(stride[idx])
                     final_stride_div = gcd(actual_stride_div * dtype_width, tma_requirement_in_bits) // dtype_width
                     stride_div.append(final_stride_div)
@@ -587,7 +594,7 @@ def calculate_stride_div_from_alignment(
             else:
                 stride_div.append(1)
 
-    if has_stride_zero:
+    if has_broadcast_dim:
         stride_div[0] = gcd(stride[0] * dtype_width, tma_requirement_in_bits) // dtype_width
 
     return stride_div
@@ -1170,18 +1177,11 @@ class test_tensor_ir:
                 return 32  # bytes
 
         if isScalarTensor:
-            if self.compiler_backend == "CudaTile":
-                # CudaTile backend: use static shape [1,...,1] with stride [1,...,1].
-                # build_tensor_ir_recursive sees a different type from the output (?,?,?) and
-                # inserts a nv_tensor_ir.broadcast op; BroadcastOpConversion clamps static-1 dims.
-                shape = [1] * len(ori_shape)
-                stride = [1] * len(ori_stride)
-            else:
-                # Collective backend: use stride=0 and dynamic shape (no explicit BroadcastOp).
-                # stride=0 encodes broadcast natively in collective IR.
-                scalar_dim = 1 if self.static_shapes_only else -1
-                shape = [scalar_dim] * len(ori_shape)
-                stride = [0] * len(ori_stride)
+            # Unified broadcast encoding for both CudaTile and Collective backends:
+            # static shape=1 + dynamic stride. The frontend emits an explicit
+            # nv_tensor_ir.broadcast op when the consumer expects a wider shape.
+            shape = [1] * len(ori_shape)
+            stride = [1 if self.static_shapes_only else -1] * len(ori_stride)
             stride_div = [1] * len(ori_stride)
             return TensorInfo(
                 tensor_type=nv_tensor_ir.TensorType.get(shape=shape, datatype=dtype),
@@ -1196,14 +1196,11 @@ class test_tensor_ir:
 
         for s, d in zip(ori_stride, ori_shape):
             if d == 1:
-                if self.compiler_backend == "CudaTile":
-                    # CudaTile backend: static shape=1 + stride=1 triggers explicit BroadcastOp.
-                    shape.append(1)
-                    stride.append(1)
-                else:
-                    # Collective backend: stride=0 + dynamic shape encodes broadcast natively.
-                    shape.append(d if self.static_shapes_only else -1)
-                    stride.append(0)
+                # Unified broadcast encoding for both backends: static shape=1
+                # + dynamic stride. Triggers an explicit nv_tensor_ir.broadcast
+                # op in the graph when the consumer expects a wider shape.
+                shape.append(1)
+                stride.append(1 if self.static_shapes_only else -1)
             else:
                 if s != 1:
                     stride.append(s if self.static_shapes_only else -1)
@@ -1228,6 +1225,7 @@ class test_tensor_ir:
             stride,
             ori_stride,
             dtype_width,
+            shape=shape,
         )
 
         reorder_mode = self.get_reorder_mode(node)
@@ -1312,6 +1310,29 @@ class test_tensor_ir:
                 return beta_tensor.item() if beta_tensor.numel() == 1 else beta_tensor.flatten()[0].item()
         return None
 
+    def _get_reduction_output_identity(self, node, torch_dtype):
+        if not (isinstance(node, tg.operation) and node.op_name == "reduction"):
+            return None
+
+        mode = str(node.kwargs.get("mode", ""))
+        if "reduction_mode.ADD" in mode or "reduction_mode.AMAX" in mode:
+            return 0.0
+        if "reduction_mode.MUL" in mode:
+            return 1.0
+        if "reduction_mode.MAX" in mode:
+            if torch_dtype.is_floating_point:
+                return torch.finfo(torch_dtype).min
+            if torch_dtype == torch.bool:
+                return False
+            return torch.iinfo(torch_dtype).min
+        if "reduction_mode.MIN" in mode:
+            if torch_dtype.is_floating_point:
+                return torch.finfo(torch_dtype).max
+            if torch_dtype == torch.bool:
+                return True
+            return torch.iinfo(torch_dtype).max
+        return None
+
     def run_tensor_ir_module(
         self,
         module,
@@ -1354,19 +1375,20 @@ class test_tensor_ir:
             self.calc_ref()
 
         # Create output tensors on GPU.
-        outputs_gpu = [
-            torch.as_strided(
-                torch.empty(
-                    tuple(node.output[0].dim),
-                    dtype=eval(convert_datatype(node.output[0].data_type, "torch")),
-                    device=device,
-                ),
+        output_nodes = [node for node in self.test_graph.nodes if node.is_output_node()]
+        outputs_gpu = []
+        for node in output_nodes:
+            output_dtype = eval(convert_datatype(node.output[0].data_type, "torch"))
+            output_tensor = torch.empty_strided(
                 size=tuple(node.output[0].dim),
                 stride=tuple(node.output[0].stride),
+                dtype=output_dtype,
+                device=device,
             )
-            for node in self.test_graph.nodes
-            if node.is_output_node()
-        ]
+            reduction_identity = self._get_reduction_output_identity(node, output_dtype)
+            if reduction_identity is not None:
+                output_tensor.fill_(reduction_identity)
+            outputs_gpu.append(output_tensor)
 
         # Add output tensors to DLPack inputs
         desc_outputs = [nv_tensor_ir.TensorIRTensorDescriptor(gpu_tensor) for gpu_tensor in outputs_gpu]
@@ -1418,7 +1440,7 @@ class test_tensor_ir:
                             mma_shape,
                             cluster_shape,
                             cta_count,
-                            (nv_tensor_ir.TileSchedulerType.kStreamK if stream_k else nv_tensor_ir.TileSchedulerType.kDefault),
+                            (nv_tensor_ir.TileSchedulerType.StreamK if stream_k else nv_tensor_ir.TileSchedulerType.Default),
                             cubin_chip,
                         ),
                         nv_tensor_ir.DebugOptions(dump_ir_path, load_ir_path, mlir_timing),
@@ -1739,11 +1761,44 @@ class test_tensor_ir:
             )
 
             if broadcast_tensor_type != input_tensor.type:
-                broadcast_tensor = nv_tensor_ir.broadcast(
-                    broadcast_tensor_type,
-                    input_tensor,
-                )
-                node_map[node] = broadcast_tensor
+                # Only emit when input is actually broadcastable UP to target.
+                # Mirror isShapeBroadcastable() in tensor_ir/lib/Utils/Utils.cpp:
+                # dim is broadcastable if both dynamic, equal, or fromDim==1.
+                # Skips spurious broadcast injection when the final graph
+                # output is smaller than leaf inputs (e.g. graphs ending in a
+                # reduction, like dBias / MatmulEpilog*Bias). The proper
+                # per-edge target-shape fix is tracked by CL-19939.
+                def _is_broadcastable_to(from_shape, to_shape):
+                    if len(from_shape) != len(to_shape):
+                        return False
+                    for fd, td in zip(from_shape, to_shape):
+                        if fd == -1 and td == -1:
+                            continue
+                        if fd == -1:
+                            return False  # dyn from, static to: can't prove
+                        if fd == td or fd == 1:
+                            continue
+                        return False
+                    return True
+
+                # Skip if the broadcast wouldn't actually change shape (e.g.
+                # leaf has same shape as target but a different layout attr).
+                # The dialect's BroadcastOp::verify rejects no-op broadcasts;
+                # the type-mismatch we observed above was on dtype/layout, not
+                # shape. Layout-only changes flow naturally without a
+                # broadcast op — the consumer handles them.
+                def _shapes_equal(from_shape, to_shape):
+                    if len(from_shape) != len(to_shape):
+                        return False
+                    return all(fd == td for fd, td in zip(from_shape, to_shape))
+
+                input_info = self.determine_tensor_ir_inout_tensor_type(node)
+                if _is_broadcastable_to(input_info.shape, output_tensor_info.shape) and not _shapes_equal(input_info.shape, output_tensor_info.shape):
+                    broadcast_tensor = nv_tensor_ir.broadcast(
+                        broadcast_tensor_type,
+                        input_tensor,
+                    )
+                    node_map[node] = broadcast_tensor
 
         # Skip if node is already processed
         if node in node_map.keys():
@@ -1774,19 +1829,50 @@ class test_tensor_ir:
 
         # For scaled matmul, we need to rewrite the tensor descriptor stride for the scaling factors to represent the
         # 128x4 interleave layout that meets the tensor-core instruction requirement.
+        # Temporary limitation: this rewrite path only supports FP8 tensors with block_size == 32.
+        # TODO: https://jirasw.nvidia.com/browse/CL-20137
+        # Support the fp4 cases for pycudnnTest.py
         if op_name == "scaled_matmul":
             sfA_node, sfB_node = node.producer_nodes[1], node.producer_nodes[3]
+            A_node = node.producer_nodes[0]
+            B_node = node.producer_nodes[2]
 
             sfA_shape, sfA_stride = sfA_node.output[0].dim, sfA_node.output[0].stride
             sfB_shape, sfB_stride = sfB_node.output[0].dim, sfB_node.output[0].stride
+            A_shape = A_node.output[0].dim
+            B_shape = B_node.output[0].dim
+
+            fp8_types = (DataType.FP8_E4M3, DataType.FP8_E5M2, DataType.FP8_E8M0)
+            A_dtype = A_node.output[0].data_type
+            B_dtype = B_node.output[0].data_type
+            sfA_dtype = sfA_node.output[0].data_type
+            sfB_dtype = sfB_node.output[0].data_type
+
+            # Guard unsupported dtype combinations until non-FP8 lowering is added.
+            if A_dtype not in fp8_types or B_dtype not in fp8_types or sfA_dtype not in fp8_types or sfB_dtype not in fp8_types:
+                raise ValueError("scaled_matmul SF stride rewrite currently supports FP8-only tensors.")
+
+            # Validate logical K-to-scale_K mapping from both A and B paths.
+            if A_shape[2] % sfA_shape[2] != 0 or B_shape[1] % sfB_shape[1] != 0:
+                raise ValueError("scaled_matmul requires K dimensions to be divisible by scale_K.")
+
+            block_size = A_shape[2] // sfA_shape[2]
+            block_size_b = B_shape[1] // sfB_shape[1]
+            if block_size != block_size_b:
+                raise ValueError(f"scaled_matmul expects consistent block_size from A/B, got {block_size} and {block_size_b}.")
+            if block_size != 32:
+                raise ValueError(f"scaled_matmul SF stride rewrite currently supports block_size == 32, got {block_size}.")
 
             # Rewrite the M/N stride of SF tensor descriptors to:
-            #   (elements per 128x4_interleave_block) * (number of 128x4_interleave_blocks)
-            #   i.e.,                       (128 * 4) * (shape_K / tile_size_K)
+            #   (elements per 128x4 interleave block) * (number of K-blocks)
+            # where:
+            #   shape_K = scale_dim * block_size (each scale value covers block_size elements in K)
+            #   number of K-blocks = ceil(shape_K / 128)
+            # This stride depends on SF logical shape, not tile_size_K.
             self.node_overwrite_stride_func_map[sfA_node] = (
-                lambda tile_size: sfA_stride[:1] + [128 * 4 * ((sfA_shape[2] * 32) // tile_size[2])] + sfA_stride[2:]
+                lambda _tile_size: sfA_stride[:1] + [128 * 4 * math.ceil((sfA_shape[2] * block_size) / 128)] + sfA_stride[2:]
             )
-            self.node_overwrite_stride_func_map[sfB_node] = lambda tile_size: sfB_stride[:2] + [128 * 4 * ((sfB_shape[1] * 32) // tile_size[2])]
+            self.node_overwrite_stride_func_map[sfB_node] = lambda _tile_size: sfB_stride[:2] + [128 * 4 * math.ceil((sfB_shape[1] * block_size) / 128)]
 
         # Create and run the node
         ir_node = node_class(node, node_map, ip, self)

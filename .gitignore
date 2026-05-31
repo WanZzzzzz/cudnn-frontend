@@ -214,16 +214,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-
-.vscode/
-.cursor/
-.claude/
-.codex/
-.nvcode/
-.vscode
-.cursor
-.claude
-.codex
-.nvcode
-AGENTS.md
-CLAUDE.md

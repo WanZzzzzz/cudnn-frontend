@@ -20,7 +20,7 @@ pytorch_mapping = {
     DataType.DOUBLE: "torch.double",
     DataType.INT8: "torch.int8",
     DataType.INT32: "torch.int32",
-    DataType.INT64: "int64",
+    DataType.INT64: "torch.int64",
     DataType.HALF: "torch.float16",
     DataType.BFLOAT16: "torch.bfloat16",
     DataType.BOOL: "torch.bool",

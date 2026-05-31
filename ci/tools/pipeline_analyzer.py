@@ -10,7 +10,6 @@ import argparse
 import json
 from collections import defaultdict
 
-
 cudnn_project_id = 28254
 
 
@@ -47,9 +46,7 @@ def extract_failed_tests(test_report):
                 failed_tests[key] = {
                     "suite": suite_name,
                     "name": test_name,
-                    "failure": test_case.get("failure", {}).get(
-                        "message", "No message"
-                    ),
+                    "failure": test_case.get("failure", {}).get("message", "No message"),
                     "execution_time": test_case.get("execution_time", 0),
                 }
 
@@ -127,16 +124,12 @@ def compare_failed_tests(gitlab_ci_token, pipeline1_id, pipeline2_id):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Compare failed tests between two GitLab pipelines"
-    )
+    parser = argparse.ArgumentParser(description="Compare failed tests between two GitLab pipelines")
 
     parser.add_argument("--pipeline1", type=int, help="ID of the first pipeline")
     parser.add_argument("--pipeline2", type=int, help="ID of the second pipeline")
 
-    parser.add_argument(
-        "--token", required=True, help="GitLab API token (e.g., glpat-xxx)"
-    )
+    parser.add_argument("--token", required=True, help="GitLab API token (e.g., glpat-xxx)")
 
     args = parser.parse_args()
 

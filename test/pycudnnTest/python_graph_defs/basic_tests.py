@@ -213,10 +213,6 @@ def test_gemm_bias_relu(jparams, testgraph):
 
 
 def test_reduction(jparams, testgraph):
-    cudnn_ver = LooseVersion(cudnn.backend_version_string())
-    if cudnn_ver >= "9.22" and cudnn_ver < "9.23":
-        pytest.skip("cuDNN 9.22 pointwise reduction triggers membound engine segfault (NVBug 6045309)")
-
     N, C, H, W = jparams["in_dim"]
 
     X = testgraph.tensor(dim=[N, C, H, W], layout="NHWC")
