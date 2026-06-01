@@ -60,6 +60,18 @@ from cudnn.datatypes import _convert_to_cutlass_data_type
 from cudnn.api_base import APIBase, TupleDict, ceil_div, is_power_of_2
 
 
+def _is_sm107_device() -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(torch.cuda.current_device()) == (10, 7)
+
+
+def _get_rubin_kernel():
+    from .moe_blockscaled_grouped_gemm_dglu_rubin import (
+        BlockScaledMoEGroupedGemmDgluKernel as RubinBlockScaledMoEGroupedGemmDgluKernel,
+    )
+
+    return RubinBlockScaledMoEGroupedGemmDgluKernel
+
+
 class GroupedGemmDgluSm100(APIBase):
     """Unified API for grouped GEMM dGLU backward operation on SM100+ GPUs.
 
@@ -257,7 +269,8 @@ class GroupedGemmDgluSm100(APIBase):
 
         self._interpret_uint8_as_fp4x2 = True
         self._has_dbias = self.dbias_desc is not None
-        self._kernel = BlockScaledMoEGroupedGemmDgluDbiasKernel
+        self._is_rubin_kernel = _is_sm107_device()
+        self._kernel = _get_rubin_kernel() if self._is_rubin_kernel else BlockScaledMoEGroupedGemmDgluDbiasKernel
 
         self.num_cluster_overlap_margin = int(os.getenv("CUDNNFE_CLUSTER_OVERLAP_MARGIN", "0"))
         self._logger.debug(f"setting num_cluster_overlap_margin: {self.num_cluster_overlap_margin}")
@@ -567,8 +580,8 @@ class GroupedGemmDgluSm100(APIBase):
             f"m_aligned must be divisible by mma_tiler_mn[0], got {self.m_aligned} % {self.mma_tiler_mn[0]} != 0",
         )
         self._value_error_if(
-            self.m_aligned != BlockScaledMoEGroupedGemmDgluDbiasKernel.FIX_PAD_SIZE,
-            f"m_aligned must be {BlockScaledMoEGroupedGemmDgluDbiasKernel.FIX_PAD_SIZE} (FIX_PAD_SIZE), got {self.m_aligned}",
+            self.m_aligned != self._kernel.FIX_PAD_SIZE,
+            f"m_aligned must be {self._kernel.FIX_PAD_SIZE} (FIX_PAD_SIZE), got {self.m_aligned}",
         )
 
         # ---- Tensor alignment ----

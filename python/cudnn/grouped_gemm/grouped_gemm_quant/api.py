@@ -54,6 +54,18 @@ from cutlass.cute.nvgpu import OperandMajorMode
 from cutlass.cute.runtime import from_dlpack
 
 
+def _is_sm107_device() -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(torch.cuda.current_device()) == (10, 7)
+
+
+def _get_rubin_kernel():
+    from .moe_blockscaled_grouped_gemm_quant_rubin import (
+        BlockScaledMoEGroupedGemmQuantKernel as RubinBlockScaledMoEGroupedGemmQuantKernel,
+    )
+
+    return RubinBlockScaledMoEGroupedGemmQuantKernel
+
+
 class GroupedGemmQuantSm100(APIBase):
     """Unified API for grouped GEMM quant operation on SM100+ GPUs.
 
@@ -217,7 +229,8 @@ class GroupedGemmQuantSm100(APIBase):
 
         self._interpret_uint8_as_fp4x2 = True
         self._has_bias = self.bias_desc is not None
-        self._kernel = BlockScaledMoEGroupedGemmQuantKernel
+        self._is_rubin_kernel = _is_sm107_device()
+        self._kernel = _get_rubin_kernel() if self._is_rubin_kernel else BlockScaledMoEGroupedGemmQuantKernel
 
         self.num_cluster_overlap_margin = int(os.getenv("CUDNNFE_CLUSTER_OVERLAP_MARGIN", "0"))
         self._logger.debug(f"setting num_cluster_overlap_margin: {self.num_cluster_overlap_margin}")
@@ -494,8 +507,8 @@ class GroupedGemmQuantSm100(APIBase):
             f"Invalid m_aligned: expected m_aligned to be divisible by mma_tiler_mn[0], got {self.m_aligned} % {self.mma_tiler_mn[0]} != 0",
         )
         self._value_error_if(
-            self.m_aligned != BlockScaledMoEGroupedGemmQuantKernel.FIX_PAD_SIZE,
-            f"m_aligned must be {BlockScaledMoEGroupedGemmQuantKernel.FIX_PAD_SIZE} (FIX_PAD_SIZE), got {self.m_aligned}",
+            self.m_aligned != self._kernel.FIX_PAD_SIZE,
+            f"m_aligned must be {self._kernel.FIX_PAD_SIZE} (FIX_PAD_SIZE), got {self.m_aligned}",
         )
 
         self._logger.debug("Checking tensor alignment")
@@ -529,6 +542,10 @@ class GroupedGemmQuantSm100(APIBase):
         )
 
         self._not_implemented_error_if(self._has_bias and self.mma_tiler_mn[1] != 256, "Bias fusion currently requires mma_tiler_mn[1] == 256")
+        self._not_implemented_error_if(
+            self._is_rubin_kernel and self.row_scale_desc is not None,
+            "Rubin grouped_gemm_quant does not support row_scale fusion through this wrapper",
+        )
 
         self._not_implemented_error_if(
             (self._is_fp8(self.ab_dtype)) and (self.mma_tiler_mn[1] == 128) and (self._is_fp8(self.d_dtype)),
@@ -560,7 +577,7 @@ class GroupedGemmQuantSm100(APIBase):
 
         self._use_full_dynamic_mnkl = os.environ.get("CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL", "1") != "0"
 
-        gemm_quant = self._kernel(
+        kernel_kwargs = dict(
             sf_vec_size=self.sf_vec_size,
             acc_dtype=_convert_to_cutlass_data_type(self.acc_dtype),
             use_2cta_instrs=self.use_2cta_instrs,
@@ -574,6 +591,11 @@ class GroupedGemmQuantSm100(APIBase):
             weight_mode=self.weight_mode,
             use_dynamic_sched=self.use_dynamic_sched,
         )
+        if self._is_rubin_kernel:
+            # The Rubin quant kernel supports optional C materialization, but
+            # this cuDNN FE wrapper only exposes quantized D/D_col outputs.
+            kernel_kwargs["generate_c"] = False
+        gemm_quant = self._kernel(**kernel_kwargs)
 
         hardware_info = cutlass.utils.HardwareInfo()
         max_active_clusters = hardware_info.get_max_active_clusters(self.cluster_shape_mn[0] * self.cluster_shape_mn[1])
@@ -778,8 +800,7 @@ class GroupedGemmQuantSm100(APIBase):
                     stride=(1, n_sym),
                 )
 
-        _compiled_kernel = cute.compile(
-            gemm_quant,
+        compile_kwargs = dict(
             a=a_cute_fake,
             b=b_cute_fake,
             sfb=sfb_cute_fake,
@@ -797,13 +818,18 @@ class GroupedGemmQuantSm100(APIBase):
             norm_const_tensor=self._make_fake_cute_tensor_from_desc(self.norm_const_desc, assumed_align=16),
             padded_offsets=self._make_fake_cute_tensor_from_desc(self.padded_offsets_desc, assumed_align=16),
             alpha=self._make_fake_cute_tensor_from_desc(self.alpha_desc, assumed_align=16),
-            row_scale=row_scale_cute_fake,
             bias=bias_cute_fake,
             prob=prob_cute_fake,
             max_active_clusters=max_active_clusters,
             stream=fake_stream,
             options="--enable-tvm-ffi",
         )
+        if self._is_rubin_kernel:
+            compile_kwargs["c"] = d_cute_fake
+            compile_kwargs["epilogue_op"] = lambda x: x
+        else:
+            compile_kwargs["row_scale"] = row_scale_cute_fake
+        _compiled_kernel = cute.compile(gemm_quant, **compile_kwargs)
 
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
 
@@ -826,28 +852,52 @@ class GroupedGemmQuantSm100(APIBase):
             stream: cuda.CUstream,
         ) -> None:
             norm_const_tensor = self._unpad_tensor_to_ndim(norm_const_tensor, 1, "norm_const")
-            _compiled_kernel(
-                a_tensor,
-                b_tensor,
-                sfb_tensor,
-                cutlass.Int32(0),
-                cutlass.Int32(0),
-                cutlass.Int64(0),
-                cached_workspace_ptr,
-                d_tensor,
-                d_col_tensor,
-                sfa_tensor,
-                sfd_row_tensor,
-                sfd_col_tensor,
-                amax_tensor,
-                norm_const_tensor,
-                padded_offsets,
-                alpha_tensor,
-                row_scale_tensor,
-                bias_tensor,
-                prob_tensor,
-                stream,
-            )
+            if self._is_rubin_kernel:
+                _compiled_kernel(
+                    a_tensor,
+                    b_tensor,
+                    sfb_tensor,
+                    cutlass.Int32(0),
+                    cutlass.Int32(0),
+                    cutlass.Int64(0),
+                    cached_workspace_ptr,
+                    d_tensor,
+                    d_tensor,
+                    d_col_tensor,
+                    sfa_tensor,
+                    sfd_row_tensor,
+                    sfd_col_tensor,
+                    amax_tensor,
+                    norm_const_tensor,
+                    padded_offsets,
+                    alpha_tensor,
+                    bias_tensor,
+                    prob_tensor,
+                    stream,
+                )
+            else:
+                _compiled_kernel(
+                    a_tensor,
+                    b_tensor,
+                    sfb_tensor,
+                    cutlass.Int32(0),
+                    cutlass.Int32(0),
+                    cutlass.Int64(0),
+                    cached_workspace_ptr,
+                    d_tensor,
+                    d_col_tensor,
+                    sfa_tensor,
+                    sfd_row_tensor,
+                    sfd_col_tensor,
+                    amax_tensor,
+                    norm_const_tensor,
+                    padded_offsets,
+                    alpha_tensor,
+                    row_scale_tensor,
+                    bias_tensor,
+                    prob_tensor,
+                    stream,
+                )
 
         self._compiled_kernel = tensor_api
 
@@ -934,8 +984,7 @@ class GroupedGemmQuantSm100(APIBase):
         workspace_ptr_cute = from_dlpack(self._workspace, assumed_align=128).iterator
 
         self._logger.debug("Compiling discrete grouped_gemm_quant kernel")
-        _compiled_kernel = cute.compile(
-            gemm_quant,
+        compile_kwargs = dict(
             a=a_tensor,
             b=b_ptrs_cute,
             sfb=sfb_ptrs_cute,
@@ -953,7 +1002,6 @@ class GroupedGemmQuantSm100(APIBase):
             norm_const_tensor=norm_const_tensor_cute,
             padded_offsets=padded_offsets_tensor,
             alpha=alpha_tensor,
-            row_scale=row_scale_tensor,
             bias=bias_cute_fake,
             prob=prob_tensor,
             max_active_clusters=max_active_clusters,
@@ -961,6 +1009,11 @@ class GroupedGemmQuantSm100(APIBase):
             epilogue_op=lambda x: x,
             options="--enable-tvm-ffi",
         )
+        if self._is_rubin_kernel:
+            compile_kwargs["c"] = d_tensor
+        else:
+            compile_kwargs["row_scale"] = row_scale_tensor
+        _compiled_kernel = cute.compile(gemm_quant, **compile_kwargs)
 
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
         cached_n = cutlass.Int32(n)
@@ -988,28 +1041,52 @@ class GroupedGemmQuantSm100(APIBase):
             norm_const_tensor = self._unpad_tensor_to_ndim(norm_const_tensor, 1, "norm_const")
             b_ptrs_addr = int(b_ptrs_device.data_ptr())
             sfb_ptrs_addr = int(sfb_ptrs_device.data_ptr())
-            _compiled_kernel(
-                a_tensor,
-                b_ptrs_addr,
-                sfb_ptrs_addr,
-                cached_n,
-                cached_k,
-                cached_b_stride,
-                cached_workspace_ptr,
-                d_tensor,
-                d_col_tensor,
-                sfa_tensor,
-                sfd_row_tensor,
-                sfd_col_tensor,
-                amax_tensor,
-                norm_const_tensor,
-                padded_offsets,
-                alpha_tensor,
-                row_scale_tensor,
-                bias_tensor,
-                prob_tensor,
-                stream,
-            )
+            if self._is_rubin_kernel:
+                _compiled_kernel(
+                    a_tensor,
+                    b_ptrs_addr,
+                    sfb_ptrs_addr,
+                    cached_n,
+                    cached_k,
+                    cached_b_stride,
+                    cached_workspace_ptr,
+                    d_tensor,
+                    d_tensor,
+                    d_col_tensor,
+                    sfa_tensor,
+                    sfd_row_tensor,
+                    sfd_col_tensor,
+                    amax_tensor,
+                    norm_const_tensor,
+                    padded_offsets,
+                    alpha_tensor,
+                    bias_tensor,
+                    prob_tensor,
+                    stream,
+                )
+            else:
+                _compiled_kernel(
+                    a_tensor,
+                    b_ptrs_addr,
+                    sfb_ptrs_addr,
+                    cached_n,
+                    cached_k,
+                    cached_b_stride,
+                    cached_workspace_ptr,
+                    d_tensor,
+                    d_col_tensor,
+                    sfa_tensor,
+                    sfd_row_tensor,
+                    sfd_col_tensor,
+                    amax_tensor,
+                    norm_const_tensor,
+                    padded_offsets,
+                    alpha_tensor,
+                    row_scale_tensor,
+                    bias_tensor,
+                    prob_tensor,
+                    stream,
+                )
 
         self._compiled_kernel = tensor_api
 
