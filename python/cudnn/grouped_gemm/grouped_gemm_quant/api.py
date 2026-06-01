@@ -542,10 +542,6 @@ class GroupedGemmQuantSm100(APIBase):
         )
 
         self._not_implemented_error_if(self._has_bias and self.mma_tiler_mn[1] != 256, "Bias fusion currently requires mma_tiler_mn[1] == 256")
-        self._not_implemented_error_if(
-            self._is_rubin_kernel and self.row_scale_desc is not None,
-            "Rubin grouped_gemm_quant does not support row_scale fusion through this wrapper",
-        )
 
         self._not_implemented_error_if(
             (self._is_fp8(self.ab_dtype)) and (self.mma_tiler_mn[1] == 128) and (self._is_fp8(self.d_dtype)),
@@ -828,7 +824,7 @@ class GroupedGemmQuantSm100(APIBase):
             compile_kwargs["c"] = d_cute_fake
             compile_kwargs["epilogue_op"] = lambda x: x
         else:
-            compile_kwargs["row_scale"] = row_scale_cute_fake
+            compile_kwargs["row_scale"] = None
         _compiled_kernel = cute.compile(gemm_quant, **compile_kwargs)
 
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
@@ -893,7 +889,7 @@ class GroupedGemmQuantSm100(APIBase):
                     norm_const_tensor,
                     padded_offsets,
                     alpha_tensor,
-                    row_scale_tensor,
+                    None,
                     bias_tensor,
                     prob_tensor,
                     stream,
@@ -1012,7 +1008,7 @@ class GroupedGemmQuantSm100(APIBase):
         if self._is_rubin_kernel:
             compile_kwargs["c"] = d_tensor
         else:
-            compile_kwargs["row_scale"] = row_scale_tensor
+            compile_kwargs["row_scale"] = None
         _compiled_kernel = cute.compile(gemm_quant, **compile_kwargs)
 
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
@@ -1082,7 +1078,7 @@ class GroupedGemmQuantSm100(APIBase):
                     norm_const_tensor,
                     padded_offsets,
                     alpha_tensor,
-                    row_scale_tensor,
+                    None,
                     bias_tensor,
                     prob_tensor,
                     stream,
