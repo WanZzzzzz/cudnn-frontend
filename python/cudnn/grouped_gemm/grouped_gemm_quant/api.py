@@ -824,7 +824,7 @@ class GroupedGemmQuantSm100(APIBase):
             compile_kwargs["c"] = d_cute_fake
             compile_kwargs["epilogue_op"] = lambda x: x
         else:
-            compile_kwargs["row_scale"] = None
+            compile_kwargs["row_scale"] = row_scale_cute_fake
         _compiled_kernel = cute.compile(gemm_quant, **compile_kwargs)
 
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
@@ -889,7 +889,7 @@ class GroupedGemmQuantSm100(APIBase):
                     norm_const_tensor,
                     padded_offsets,
                     alpha_tensor,
-                    None,
+                    row_scale_tensor,
                     bias_tensor,
                     prob_tensor,
                     stream,
@@ -1008,7 +1008,7 @@ class GroupedGemmQuantSm100(APIBase):
         if self._is_rubin_kernel:
             compile_kwargs["c"] = d_tensor
         else:
-            compile_kwargs["row_scale"] = None
+            compile_kwargs["row_scale"] = row_scale_tensor
         _compiled_kernel = cute.compile(gemm_quant, **compile_kwargs)
 
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
@@ -1078,7 +1078,7 @@ class GroupedGemmQuantSm100(APIBase):
                     norm_const_tensor,
                     padded_offsets,
                     alpha_tensor,
-                    None,
+                    row_scale_tensor,
                     bias_tensor,
                     prob_tensor,
                     stream,
