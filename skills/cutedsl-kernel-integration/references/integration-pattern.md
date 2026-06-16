@@ -110,28 +110,26 @@ Rubin kernel modules are internal implementation details. Do not add new public 
 
 ### `api.py` dispatch conventions
 
-Add small helpers near the top of `api.py`:
+Device gating lives in `cudnn.api_base`: `is_sm107_device()` and `self._is_rubin_kernel` (set in `APIBase.__init__`).
+
+Add a lazy Rubin kernel loader near the top of `api.py`:
 
 ```python
-def _is_sm107_device() -> bool:
-    return torch.cuda.is_available() and torch.cuda.get_device_capability(torch.cuda.current_device()) == (10, 7)
-
-
 def _get_rubin_kernel():
     from .<rubin_module> import <RubinKernelClass> as RubinKernelAlias
     return RubinKernelAlias
 ```
 
-In `__init__`:
+In `__init__` (after `super().__init__()`):
 
 ```python
-self._is_rubin_kernel = _is_sm107_device()
 self._kernel = _get_rubin_kernel() if self._is_rubin_kernel else DefaultKernelClass
 ```
 
 Then:
 
 - Replace hard-coded references like `DefaultKernelClass.FIX_PAD_SIZE` with `self._kernel.FIX_PAD_SIZE`.
+- Include `get_device_type()` (`"blackwell"` or `"rubin"`) in wrapper cache keys whenever the wrapper can dispatch to architecture-specific kernels.
 - Lazy-import the Rubin module inside `_get_rubin_kernel()` so non-Rubin environments do not pay import cost up front.
 - Branch in `compile()` / `execute()` only when the Rubin kernel signature or epilogue contract differs from the default kernel. `grouped_gemm_glu` and `grouped_gemm_dglu` only swap the kernel class; `grouped_gemm_quant` additionally adapts compile/execute kwargs for Rubin's optional `c` materialization path and omits `row_scale` on Rubin while keeping it on non-Rubin architectures.
 

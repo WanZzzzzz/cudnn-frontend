@@ -57,11 +57,7 @@ from cutlass.cute.nvgpu import OperandMajorMode
 from cutlass.cute.runtime import from_dlpack, make_fake_stream
 
 from cudnn.datatypes import _convert_to_cutlass_data_type
-from cudnn.api_base import APIBase, TupleDict, ceil_div, is_power_of_2
-
-
-def _is_sm107_device() -> bool:
-    return torch.cuda.is_available() and torch.cuda.get_device_capability(torch.cuda.current_device()) == (10, 7)
+from cudnn.api_base import APIBase, TupleDict, ceil_div, get_device_type, is_power_of_2
 
 
 def _get_rubin_kernel():
@@ -70,6 +66,21 @@ def _get_rubin_kernel():
     )
 
     return RubinBlockScaledMoEGroupedGemmGluKernel
+
+
+_GEGGLU_ALPHA_DEFAULT = 1.702
+_GLU_CLAMP_MAX_DEFAULT = 7.0
+_GLU_CLAMP_MIN_DEFAULT = -7.0
+
+
+def _reject_unsupported_rubin_glu_tune_params(
+    is_rubin_kernel: bool,
+    geglu_alpha: float,
+    glu_clamp_max: float,
+    glu_clamp_min: float,
+) -> None:
+    if is_rubin_kernel and (geglu_alpha != _GEGGLU_ALPHA_DEFAULT or glu_clamp_max != _GLU_CLAMP_MAX_DEFAULT or glu_clamp_min != _GLU_CLAMP_MIN_DEFAULT):
+        raise NotImplementedError("Rubin grouped GEMM GLU does not support geglu_alpha, glu_clamp_max, or glu_clamp_min tuning")
 
 
 class GroupedGemmGluSm100(APIBase):
@@ -248,7 +259,6 @@ class GroupedGemmGluSm100(APIBase):
 
         self._interpret_uint8_as_fp4x2 = True
         self._has_bias = self.bias_desc is not None
-        self._is_rubin_kernel = _is_sm107_device()
         self._kernel = _get_rubin_kernel() if self._is_rubin_kernel else BlockScaledMoEGroupedGemmGluBiasKernel
 
         self.num_cluster_overlap_margin = int(os.getenv("CUDNNFE_CLUSTER_OVERLAP_MARGIN", "0"))
@@ -836,12 +846,9 @@ class GroupedGemmGluSm100(APIBase):
                 )
 
         # Compile with keyword args (dense mode uses the unified __call__ positional order).
-        # linear_offset, geglu_alpha, glu_clamp_max, and glu_clamp_min are runtime
-        # cutlass.Float32 (not Constexpr), so the compile-time placeholders below are
-        # irrelevant -- the values passed through tensor_api() at execute() time are
-        # what the kernel actually uses.
-        _compiled_kernel = cute.compile(
-            gemm_glu,
+        # linear_offset is a runtime cutlass.Float32 on both paths. geglu_alpha and the
+        # clamp limits are only supported on the SM100 kernel.
+        compile_kwargs = dict(
             a=a_cute_fake,
             b=b_cute_fake,
             sfb=sfb_cute_fake,
@@ -866,11 +873,17 @@ class GroupedGemmGluSm100(APIBase):
             stream=fake_stream,
             epilogue_op=lambda x: x,
             linear_offset=cutlass.Float32(0.0),
-            geglu_alpha=cutlass.Float32(1.702),
-            glu_clamp_max=cutlass.Float32(7.0),
-            glu_clamp_min=cutlass.Float32(-7.0),
             options="--enable-tvm-ffi",
         )
+        if not self._is_rubin_kernel:
+            compile_kwargs.update(
+                {
+                    "geglu_alpha": cutlass.Float32(_GEGGLU_ALPHA_DEFAULT),
+                    "glu_clamp_max": cutlass.Float32(_GLU_CLAMP_MAX_DEFAULT),
+                    "glu_clamp_min": cutlass.Float32(_GLU_CLAMP_MIN_DEFAULT),
+                }
+            )
+        _compiled_kernel = cute.compile(gemm_glu, **compile_kwargs)
 
         # Cache workspace pointer for the tensor_api closure
         cached_workspace_ptr = from_dlpack(self._workspace, assumed_align=128).iterator
@@ -898,7 +911,7 @@ class GroupedGemmGluSm100(APIBase):
             glu_clamp_min: float = -7.0,
         ) -> None:
             norm_const_tensor = self._unpad_tensor_to_ndim(norm_const_tensor, 1, "norm_const")
-            _compiled_kernel(
+            kernel_args = (
                 a_tensor,
                 b_tensor,
                 sfb_tensor,
@@ -920,10 +933,16 @@ class GroupedGemmGluSm100(APIBase):
                 bias_tensor,
                 stream,
                 cutlass.Float32(linear_offset),
-                cutlass.Float32(geglu_alpha),
-                cutlass.Float32(glu_clamp_max),
-                cutlass.Float32(glu_clamp_min),
             )
+            if self._is_rubin_kernel:
+                _compiled_kernel(*kernel_args)
+            else:
+                _compiled_kernel(
+                    *kernel_args,
+                    cutlass.Float32(geglu_alpha),
+                    cutlass.Float32(glu_clamp_max),
+                    cutlass.Float32(glu_clamp_min),
+                )
 
         self._compiled_kernel = tensor_api
 
@@ -1022,12 +1041,9 @@ class GroupedGemmGluSm100(APIBase):
 
         workspace_ptr_cute = from_dlpack(self._workspace, assumed_align=128).iterator
 
-        # linear_offset, geglu_alpha, glu_clamp_max, and glu_clamp_min are runtime
-        # cutlass.Float32 (not Constexpr), so the compile-time placeholders below are
-        # irrelevant -- the values passed through tensor_api() at execute() time are
-        # what the kernel actually uses.
+        # linear_offset is runtime on both paths; clamp/alpha tuning kwargs are SM100-only.
         self._logger.debug("Compiling discrete grouped GEMM GLU kernel")
-        _compiled_kernel = cute.compile(
+        discrete_compile_args = (
             gemm_glu,
             a_tensor,
             b_ptrs_cute,
@@ -1051,13 +1067,19 @@ class GroupedGemmGluSm100(APIBase):
             bias_tensor,
             max_active_clusters,
             fake_stream,
-            lambda x: x,  # epilogue_op (Constexpr, baked in)
+            lambda x: x,
             cutlass.Float32(0.0),
-            cutlass.Float32(1.702),
-            cutlass.Float32(7.0),
-            cutlass.Float32(-7.0),
-            options="--enable-tvm-ffi",
         )
+        if self._is_rubin_kernel:
+            _compiled_kernel = cute.compile(*discrete_compile_args, options="--enable-tvm-ffi")
+        else:
+            _compiled_kernel = cute.compile(
+                *discrete_compile_args,
+                cutlass.Float32(_GEGGLU_ALPHA_DEFAULT),
+                cutlass.Float32(_GLU_CLAMP_MAX_DEFAULT),
+                cutlass.Float32(_GLU_CLAMP_MIN_DEFAULT),
+                options="--enable-tvm-ffi",
+            )
 
         self._n = n
         self._k = k
@@ -1095,7 +1117,7 @@ class GroupedGemmGluSm100(APIBase):
             b_ptrs_addr = int(b_ptrs_device.data_ptr())
             sfb_ptrs_addr = int(sfb_ptrs_device.data_ptr())
 
-            _compiled_kernel(
+            kernel_args = (
                 a_tensor,
                 b_ptrs_addr,
                 sfb_ptrs_addr,
@@ -1117,10 +1139,16 @@ class GroupedGemmGluSm100(APIBase):
                 bias_tensor,
                 stream,
                 cutlass.Float32(linear_offset),
-                cutlass.Float32(geglu_alpha),
-                cutlass.Float32(glu_clamp_max),
-                cutlass.Float32(glu_clamp_min),
             )
+            if self._is_rubin_kernel:
+                _compiled_kernel(*kernel_args)
+            else:
+                _compiled_kernel(
+                    *kernel_args,
+                    cutlass.Float32(geglu_alpha),
+                    cutlass.Float32(glu_clamp_max),
+                    cutlass.Float32(glu_clamp_min),
+                )
 
         self._compiled_kernel = tensor_api
 
@@ -1215,6 +1243,12 @@ class GroupedGemmGluSm100(APIBase):
         # that pre-date the explicit linear_offset kwarg.
         if linear_offset is None:
             linear_offset = 1.0 if self.act_func == "geglu" else 0.0
+        _reject_unsupported_rubin_glu_tune_params(
+            self._is_rubin_kernel,
+            geglu_alpha,
+            glu_clamp_max,
+            glu_clamp_min,
+        )
 
         self._logger.debug("Executing grouped GEMM GLU kernel")
         if self._has_bias:
@@ -1390,6 +1424,13 @@ def grouped_gemm_glu_wrapper_sm100(
     # callers that have not been updated to pass linear_offset explicitly.
     if linear_offset is None:
         linear_offset = 1.0 if act_func == "geglu" else 0.0
+    device_type = get_device_type()
+    _reject_unsupported_rubin_glu_tune_params(
+        device_type == "rubin",
+        geglu_alpha,
+        glu_clamp_max,
+        glu_clamp_min,
+    )
 
     # ---- Auto-detect weight mode ----
     is_dense = b_tensor is not None
@@ -1494,6 +1535,7 @@ def grouped_gemm_glu_wrapper_sm100(
 
     if is_dense:
         cache_key = (
+            device_type,
             weight_mode,
             act_func,
             use_full_dynamic,
@@ -1535,6 +1577,7 @@ def grouped_gemm_glu_wrapper_sm100(
         )
     else:
         cache_key = (
+            device_type,
             weight_mode,
             act_func,
             a_tensor.shape[1:],

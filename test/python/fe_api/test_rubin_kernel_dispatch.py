@@ -73,22 +73,31 @@ def test_is_sm107_device_gating(
     default_kernel_name,
     rubin_filename,
 ):
-    api_mod = _import_api_module(api_module_path)
+    import cudnn.api_base as api_base
 
     with mock.patch("torch.cuda.is_available", return_value=False):
-        assert api_mod._is_sm107_device() is False
+        assert api_base.is_sm107_device() is False
+        assert api_base.get_device_type() == "blackwell"
 
-    with mock.patch("torch.cuda.is_available", return_value=True), mock.patch(
-        "torch.cuda.get_device_capability",
-        return_value=(10, 0),
+    with (
+        mock.patch("torch.cuda.is_available", return_value=True),
+        mock.patch(
+            "torch.cuda.get_device_capability",
+            return_value=(10, 0),
+        ),
     ):
-        assert api_mod._is_sm107_device() is False
+        assert api_base.is_sm107_device() is False
+        assert api_base.get_device_type() == "blackwell"
 
-    with mock.patch("torch.cuda.is_available", return_value=True), mock.patch(
-        "torch.cuda.get_device_capability",
-        return_value=(10, 7),
+    with (
+        mock.patch("torch.cuda.is_available", return_value=True),
+        mock.patch(
+            "torch.cuda.get_device_capability",
+            return_value=(10, 7),
+        ),
     ):
-        assert api_mod._is_sm107_device() is True
+        assert api_base.is_sm107_device() is True
+        assert api_base.get_device_type() == "rubin"
 
 
 @pytest.mark.parametrize(
@@ -126,18 +135,22 @@ def test_kernel_selection_uses_rubin_on_sm107(
     default_mod = importlib.import_module(default_module_path)
     default_kernel = getattr(default_mod, default_kernel_name)
     rubin_kernel = api_mod._get_rubin_kernel()
+    import cudnn.api_base as api_base
 
-    with mock.patch.object(api_mod, "_is_sm107_device", return_value=True), mock.patch.object(
-        api_mod,
-        "_get_rubin_kernel",
-        return_value=rubin_kernel,
+    with (
+        mock.patch("cudnn.api_base.is_sm107_device", return_value=True),
+        mock.patch.object(
+            api_mod,
+            "_get_rubin_kernel",
+            return_value=rubin_kernel,
+        ),
     ):
-        selected = api_mod._get_rubin_kernel() if api_mod._is_sm107_device() else default_kernel
+        selected = api_mod._get_rubin_kernel() if api_base.is_sm107_device() else default_kernel
 
     assert selected is rubin_kernel
 
-    with mock.patch.object(api_mod, "_is_sm107_device", return_value=False):
-        selected = api_mod._get_rubin_kernel() if api_mod._is_sm107_device() else default_kernel
+    with mock.patch("cudnn.api_base.is_sm107_device", return_value=False):
+        selected = api_mod._get_rubin_kernel() if api_base.is_sm107_device() else default_kernel
 
     assert selected is default_kernel
 

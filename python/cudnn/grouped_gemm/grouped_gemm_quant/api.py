@@ -43,7 +43,7 @@ import torch
 from cuda.bindings import driver as cuda
 from cutlass.cute.runtime import make_fake_stream
 
-from cudnn.api_base import APIBase, TensorDesc, TupleDict, ceil_div, is_power_of_2
+from cudnn.api_base import APIBase, TensorDesc, TupleDict, ceil_div, get_device_type, is_power_of_2
 from cudnn.datatypes import _convert_to_cutlass_data_type
 
 from .grouped_gemm_quant import (
@@ -52,10 +52,6 @@ from .grouped_gemm_quant import (
 from ..moe_utils import MoEWeightMode
 from cutlass.cute.nvgpu import OperandMajorMode
 from cutlass.cute.runtime import from_dlpack
-
-
-def _is_sm107_device() -> bool:
-    return torch.cuda.is_available() and torch.cuda.get_device_capability(torch.cuda.current_device()) == (10, 7)
 
 
 def _get_rubin_kernel():
@@ -229,7 +225,6 @@ class GroupedGemmQuantSm100(APIBase):
 
         self._interpret_uint8_as_fp4x2 = True
         self._has_bias = self.bias_desc is not None
-        self._is_rubin_kernel = _is_sm107_device()
         self._kernel = _get_rubin_kernel() if self._is_rubin_kernel else BlockScaledMoEGroupedGemmQuantKernel
 
         self.num_cluster_overlap_margin = int(os.getenv("CUDNNFE_CLUSTER_OVERLAP_MARGIN", "0"))
@@ -297,7 +292,12 @@ class GroupedGemmQuantSm100(APIBase):
             "Pass a tensor of ones with shape (valid_m, 1, 1) if no gating is needed.",
         )
         self._check_tensor_shape(self.prob_desc, (tensor_m, 1, 1), "prob")
-        self._check_tensor_shape(self.row_scale_desc, (tensor_m,), "row_scale")
+        self._not_implemented_error_if(
+            self._is_rubin_kernel and self.row_scale_desc is not None,
+            "Rubin grouped GEMM quant does not support row_scale fusion",
+        )
+        if not self._is_rubin_kernel:
+            self._check_tensor_shape(self.row_scale_desc, (tensor_m,), "row_scale")
         self._check_tensor_shape(self.bias_desc, (n, l), "bias")
         self._check_tensor_shape(self.amax_desc, (self.expert_cnt, 1), "amax")
         self._check_tensor_shape(self.norm_const_desc, (1,), "norm_const")
@@ -335,11 +335,12 @@ class GroupedGemmQuantSm100(APIBase):
             self.bias_desc,
             stride=[(1, n)],
         )
-        _ = self._check_tensor_stride(
-            self.row_scale_desc,
-            stride=[(1,)],
-            extra_error_msg="row_scale must be a contiguous 1-D tensor",
-        )
+        if not self._is_rubin_kernel:
+            _ = self._check_tensor_stride(
+                self.row_scale_desc,
+                stride=[(1,)],
+                extra_error_msg="row_scale must be a contiguous 1-D tensor",
+            )
 
         self._logger.debug("Checking data types")
         self.ab_dtype = self._check_dtype(
@@ -446,12 +447,13 @@ class GroupedGemmQuantSm100(APIBase):
             name="D_col",
             extra_error_msg="D_col must have the same dtype as D",
         )
-        self._check_dtype(
-            self.row_scale_desc,
-            dtype=torch.float32,
-            name="row_scale",
-            extra_error_msg="row_scale must be float32",
-        )
+        if not self._is_rubin_kernel:
+            self._check_dtype(
+                self.row_scale_desc,
+                dtype=torch.float32,
+                name="row_scale",
+                extra_error_msg="row_scale must be float32",
+            )
 
         self._not_implemented_error_if(
             self._is_fp4x2(self.ab_dtype) and self.sf_vec_size == 16 and self.d_dtype == torch.float32,
@@ -1167,7 +1169,12 @@ class GroupedGemmQuantSm100(APIBase):
                 bias_tensor is not None,
                 "bias_tensor must be omitted at execute() when the API was compiled without sample_bias",
             )
-        if self.row_scale_desc is None:
+        if self._is_rubin_kernel:
+            self._value_error_if(
+                row_scale_tensor is not None,
+                "row_scale_tensor is not supported on Rubin (sm107)",
+            )
+        elif self.row_scale_desc is None:
             self._value_error_if(
                 row_scale_tensor is not None,
                 "row_scale_tensor must be omitted at execute() when the API was compiled without sample_row_scale",
@@ -1421,7 +1428,10 @@ def grouped_gemm_quant_wrapper_sm100(
             "prob_tensor is required: the kernel unconditionally multiplies output by per-row gating probability. "
             "Pass a tensor of ones with shape (valid_m, 1, 1) if no gating is needed."
         )
+    device_type = get_device_type()
     if row_scale_tensor is not None:
+        if device_type == "rubin":
+            raise NotImplementedError("Rubin grouped GEMM quant does not support row_scale fusion")
         if row_scale_tensor.dtype != torch.float32:
             raise ValueError(f"row_scale_tensor must be float32, got {row_scale_tensor.dtype}")
         if tuple(row_scale_tensor.shape) != (valid_m,):
@@ -1464,6 +1474,7 @@ def grouped_gemm_quant_wrapper_sm100(
 
     if is_dense:
         cache_key = (
+            device_type,
             weight_mode,
             use_full_dynamic,
             a_tensor.shape[1:] if not use_full_dynamic else None,
@@ -1501,6 +1512,7 @@ def grouped_gemm_quant_wrapper_sm100(
         )
     else:
         cache_key = (
+            device_type,
             weight_mode,
             a_tensor.shape[1:],
             stride_order(a_tensor),
