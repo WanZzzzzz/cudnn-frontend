@@ -40,6 +40,8 @@ def _test_grouped_gemm_wgrad_dense_compile_execute(
     )
     inputs = allocate_grouped_gemm_wgrad_tensors(cfg)
     wgrad_tensor = allocate_grouped_gemm_wgrad_output(cfg)
+    if accumulate_on_output:
+        wgrad_tensor.zero_()
 
     op = cudnn.GroupedGemmWgradSm100(
         sample_a=inputs["a_tensor"],
@@ -226,6 +228,7 @@ def _test_grouped_gemm_wgrad_discrete_compile_execute(
     cluster_shape_mn,
     sf_vec_size,
     sf_dtype,
+    accumulate_on_output=False,
 ):
     cfg = grouped_gemm_wgrad_init(
         ab_dtype=ab_dtype,
@@ -255,6 +258,7 @@ def _test_grouped_gemm_wgrad_discrete_compile_execute(
         mma_tiler_mn=cfg["mma_tiler_mn"],
         cluster_shape_mn=cfg["cluster_shape_mn"],
         sf_vec_size=cfg["sf_vec_size"],
+        accumulate_on_output=accumulate_on_output,
     )
     try:
         assert op.check_support()
@@ -318,6 +322,30 @@ def test_grouped_gemm_wgrad_discrete_compile_execute_fp8(
         cluster_shape_mn=cluster_shape_mn,
         sf_vec_size=sf_vec_size,
         sf_dtype=sf_dtype,
+    )
+
+
+@pytest.mark.L0
+@torch_fork_set_rng(seed=0)
+@with_grouped_gemm_wgrad_params_fp8
+def test_grouped_gemm_wgrad_discrete_accumulate_compile_execute_fp8(
+    ab_dtype,
+    wgrad_dtype,
+    acc_dtype,
+    mma_tiler_mn,
+    cluster_shape_mn,
+    sf_vec_size,
+    sf_dtype,
+):
+    _test_grouped_gemm_wgrad_discrete_compile_execute(
+        ab_dtype=ab_dtype,
+        wgrad_dtype=wgrad_dtype,
+        acc_dtype=acc_dtype,
+        mma_tiler_mn=mma_tiler_mn,
+        cluster_shape_mn=cluster_shape_mn,
+        sf_vec_size=sf_vec_size,
+        sf_dtype=sf_dtype,
+        accumulate_on_output=True,
     )
 
 
