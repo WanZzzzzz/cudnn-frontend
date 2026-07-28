@@ -14,12 +14,20 @@ import cutlass.cute as cute
 from cuda.bindings import driver as cuda
 from cutlass.cute.runtime import from_dlpack, make_fake_stream
 
-from cudnn.api_base import APIBase, TensorDesc, TupleDict, ceil_div, is_power_of_2
+from cudnn.api_base import APIBase, TensorDesc, TupleDict, ceil_div, get_device_type, is_power_of_2
 from cudnn.datatypes import _convert_to_cutlass_data_type
 from cudnn.discrete_grouped_gemm.discrete_kernel_utils import _require_pointer_tensor
 
 from .moe_blockscaled_grouped_gemm_wgrad import BlockScaledMoEGroupedGemmWgradKernel
 from ..moe_utils import MoEWeightMode, WGradInputOrder
+
+
+def _get_rubin_kernel():
+    from .moe_blockscaled_grouped_gemm_wgrad_rubin import (
+        BlockScaledMoEGroupedGemmWgradRubinKernel,
+    )
+
+    return BlockScaledMoEGroupedGemmWgradRubinKernel
 
 
 def _round_up(a: int, b: int) -> int:
@@ -30,6 +38,15 @@ def _normalize_input_order(input_order: WGradInputOrder | str) -> WGradInputOrde
     if isinstance(input_order, WGradInputOrder):
         return input_order
     return WGradInputOrder(input_order)
+
+
+def _is_supported_rubin_quantization(ab_dtype: torch.dtype, sf_dtype: torch.dtype, sf_vec_size: int) -> bool:
+    is_fp4 = ab_dtype in (torch.float4_e2m1fn_x2, torch.uint8)
+    if is_fp4:
+        return (sf_dtype == torch.float8_e4m3fn and sf_vec_size == 16) or (
+            sf_dtype == torch.float8_e8m0fnu and sf_vec_size == 32
+        )
+    return ab_dtype in (torch.float8_e4m3fn, torch.float8_e5m2) and sf_dtype == torch.float8_e8m0fnu and sf_vec_size == 32
 
 
 class GroupedGemmWgradSm100(APIBase):
@@ -127,7 +144,7 @@ class GroupedGemmWgradSm100(APIBase):
         self.use_2cta_instrs = mma_tiler_mn[0] == 256
         self.cluster_shape_mn = cluster_shape_mn or ((2, 1) if self.use_2cta_instrs else (1, 1))
         self.accumulate_on_output = accumulate_on_output
-        self._kernel = BlockScaledMoEGroupedGemmWgradKernel
+        self._kernel = _get_rubin_kernel() if self._is_rubin_kernel else BlockScaledMoEGroupedGemmWgradKernel
         self._workspace = None
 
     def _validate_offsets(self, offsets_tensor: torch.Tensor, tokens_sum: int, name: str) -> Tuple[int, ...]:
@@ -151,6 +168,27 @@ class GroupedGemmWgradSm100(APIBase):
             self._value_error_if(tokens_sum != 0, f"{name} cannot be empty when total tokens is {tokens_sum}")
 
         return offset_values
+
+    def _check_rubin_quantization_support(self) -> None:
+        if not self._is_rubin_kernel:
+            return
+
+        self._value_error_if(
+            self.sfa_desc.dtype != self.sfb_desc.dtype,
+            "Rubin wgrad requires sample_sfa and sample_sfb to have the same dtype",
+        )
+        self._value_error_if(
+            not _is_supported_rubin_quantization(self.a_desc.dtype, self.sfa_desc.dtype, self.sf_vec_size),
+            "Rubin wgrad supports NVFP4 (E2M1/E4M3, vec16), MXFP4 "
+            "(E2M1/E8M0, vec32), and MXFP8 (E4M3 or E5M2/E8M0, vec32)",
+        )
+        self._value_error_if(self.acc_dtype != torch.float32, "Rubin wgrad requires float32 accumulation")
+
+        if self._is_fp4x2(self.a_desc):
+            self._value_error_if(
+                self.a_desc.stride[1] != 1 or self.b_desc.stride[0] != 1,
+                "Four-bit Rubin wgrad requires K-major sample_a and sample_b layouts",
+            )
 
     def check_support(self) -> bool:
         m, tokens_sum = self._tensor_shape(self.a_desc, name="sample_a")
@@ -178,6 +216,7 @@ class GroupedGemmWgradSm100(APIBase):
             "sample_sfb",
             extra_error_msg="sample_sfb must have dtype float8_e8m0fnu or float8_e4m3fn",
         )
+        self._check_rubin_quantization_support()
         self._check_dtype(self.offsets_desc, torch.int32, "sample_offsets", extra_error_msg="sample_offsets must be int32")
         self._check_dtype(
             self.wgrad_dtype, [torch.bfloat16, torch.float16, torch.float32], "wgrad_dtype", extra_error_msg="wgrad_dtype must be bfloat16, float16, or float32"
@@ -587,6 +626,7 @@ def grouped_gemm_wgrad_wrapper_sm100(
 ) -> TupleDict:
     """Compile and execute grouped GEMM wgrad in one call."""
     input_order = _normalize_input_order(input_order)
+    device_type = get_device_type()
     hidden, _ = a_tensor.shape
     _, intermediate = b_tensor.shape
     wgrad_shape = (hidden, intermediate)
@@ -603,6 +643,7 @@ def grouped_gemm_wgrad_wrapper_sm100(
             wgrad_tensor = torch.empty((expert_cnt, *wgrad_shape), dtype=wgrad_dtype, device=a_tensor.device)
 
     cache_key = (
+        device_type,
         output_mode,
         *_dynamic_dim_tensor_signature(a_tensor, dynamic_dims=(1,)),
         *_dynamic_dim_tensor_signature(b_tensor, dynamic_dims=(0,)),
